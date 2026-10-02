@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FilmCam</string>
+    <string name="cd_shutter">Shutter</string>
+    <string name="cd_flip_camera">Flip camera</string>
+    <string name="cd_film_picker">Choose a film camera</string>
+    <string name="cd_preview">Camera preview</string>
+    <string name="cd_film_thumbnail">%1$s preview</string>
+    <string name="cd_film_selected">%1$s selected</string>
+    <string name="saved_to_gallery">Saved to gallery</string>
+    <string name="camera_permission_required">Camera permission is required to take photos</string>
+    <string name="saving">Saving…</string>
+    <string name="film_ccd">CCD</string>
+    <string name="film_135">135</string>
+    <string name="film_120">120</string>
+    <string name="film_compact">Compact</string>
+    <string name="film_disposable">Disposable</string>
+    <string name="film_instant">Instant</string>
+    <string name="film_lomo">Lomo</string>
+    <string name="film_super8">Super 8</string>
+</resources>
