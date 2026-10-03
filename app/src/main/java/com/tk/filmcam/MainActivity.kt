@@ -2,6 +2,7 @@ package com.tk.filmcam
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -13,9 +14,14 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -28,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
@@ -113,6 +120,9 @@ private fun FilmCamScreen(
     val flashDesc = stringResource(R.string.cd_flash)
     val torchDesc = stringResource(R.string.cd_torch)
 
+    val configuration = LocalConfiguration.current
+    val landscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+
     LaunchedEffect(Unit) {
         if (!permissionGranted) onRequestPermission()
     }
@@ -148,68 +158,68 @@ private fun FilmCamScreen(
             }
         }
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .systemBarsPadding(),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            if (status.isNotEmpty()) {
-                StatusBar(message = status)
-            }
-
-            Column(modifier = Modifier.fillMaxWidth()) {
-                FilmPicker(
-                    selected = selectedFilm,
-                    onSelect = { selectedFilm = it }
-                )
-
-                Row(
+        if (landscape) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+            ) {
+                Box(modifier = Modifier.weight(1f).fillMaxHeight())
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 10.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
+                        .width(132.dp)
+                        .fillMaxHeight(),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    IconPill(
-                        label = "−",
-                        desc = zoomOutDesc,
-                        enabled = canZoomOut,
-                        onClick = { controller.stepZoom(-1f) }
-                    )
-                    Spacer8()
-                    ZoomReadout(zoom = zoom)
-                    Spacer8()
-                    IconPill(
-                        label = "+",
-                        desc = zoomInDesc,
-                        enabled = canZoomIn,
-                        onClick = { controller.stepZoom(1f) }
-                    )
-                }
+                    if (status.isNotEmpty()) StatusBar(message = status, modifier = Modifier.fillMaxWidth())
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
+                    Spacer(Modifier.weight(1f))
+
+                    FilmPicker(
+                        selected = selectedFilm,
+                        onSelect = { selectedFilm = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconPill(
-                            label = "⚡",
+                            label = "\u2212",
+                            desc = zoomOutDesc,
+                            enabled = canZoomOut,
+                            onClick = { controller.stepZoom(-1f) }
+                        )
+                        Spacer8()
+                        ZoomReadout(zoom = zoom)
+                        Spacer8()
+                        IconPill(
+                            label = "+",
+                            desc = zoomInDesc,
+                            enabled = canZoomIn,
+                            onClick = { controller.stepZoom(1f) }
+                        )
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconPill(
+                            label = "\u26a1",
                             desc = flashDesc,
                             active = flashOn,
                             onClick = { flashOn = controller.toggleFlash() }
                         )
                         Spacer8()
                         IconPill(
-                            label = "☀",
+                            label = "\u2600",
                             desc = torchDesc,
                             active = torchOn,
                             onClick = { torchOn = controller.toggleTorch() }
                         )
                     }
+
+                    Spacer(Modifier.height(14.dp))
+
                     ShutterButton(
                         enabled = permissionGranted && !saving,
                         onClick = {
@@ -225,6 +235,9 @@ private fun FilmCamScreen(
                             }
                         }
                     )
+
+                    Spacer(Modifier.height(14.dp))
+
                     FlipButton(
                         onClick = {
                             controller.flip { }
@@ -232,6 +245,104 @@ private fun FilmCamScreen(
                             status = ""
                         }
                     )
+
+                    Spacer(Modifier.height(18.dp))
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                if (status.isNotEmpty()) {
+                    StatusBar(message = status)
+                }
+
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    FilmPicker(
+                        selected = selectedFilm,
+                        onSelect = { selectedFilm = it }
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconPill(
+                            label = "\u2212",
+                            desc = zoomOutDesc,
+                            enabled = canZoomOut,
+                            onClick = { controller.stepZoom(-1f) }
+                        )
+                        Spacer8()
+                        ZoomReadout(zoom = zoom)
+                        Spacer8()
+                        IconPill(
+                            label = "+",
+                            desc = zoomInDesc,
+                            enabled = canZoomIn,
+                            onClick = { controller.stepZoom(1f) }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 20.dp, bottom = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        IconPill(
+                            label = "\u26a1",
+                            desc = flashDesc,
+                            active = flashOn,
+                            onClick = { flashOn = controller.toggleFlash() }
+                        )
+                        Spacer8()
+                        IconPill(
+                            label = "\u2600",
+                            desc = torchDesc,
+                            active = torchOn,
+                            onClick = { torchOn = controller.toggleTorch() }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 28.dp, end = 28.dp, bottom = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        FlipButton(
+                            onClick = {
+                                controller.flip { }
+                                previewKey++
+                                status = ""
+                            }
+                        )
+                        ShutterButton(
+                            enabled = permissionGranted && !saving,
+                            onClick = {
+                                saving = true
+                                status = savingMessage
+                                controller.capture(selectedFilm) { result ->
+                                    saving = false
+                                    status = if (result.startsWith("http") || result.contains("/")) {
+                                        savedMessage
+                                    } else {
+                                        result
+                                    }
+                                }
+                            }
+                        )
+                        Box(modifier = Modifier.size(44.dp))
+                    }
                 }
             }
         }

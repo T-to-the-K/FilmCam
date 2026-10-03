@@ -4,7 +4,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.hardware.display.DisplayManager
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.view.OrientationEventListener
 import android.view.ScaleGestureDetector
@@ -47,6 +50,8 @@ class FilmCameraController(
     private var previewView: PreviewView? = null
 
     private var orientationListener: OrientationEventListener? = null
+    private var displayListener: DisplayManager.DisplayListener? = null
+    private var displayManager: DisplayManager? = null
     private var scaleDetector: ScaleGestureDetector? = null
 
     private var zoomCallback: ((Float) -> Unit)? = null
@@ -99,12 +104,13 @@ class FilmCameraController(
         val provider = cameraProvider ?: return
         val rotation = currentRotation()
 
-        val newPreview = Preview.Builder()
-            .setTargetRotation(rotation)
-            .build()
-            .apply {
-                previewView?.let { surfaceProvider = it.surfaceProvider }
-            }
+        // NOTE: deliberately no setTargetRotation on Preview. PreviewView
+        // tracks the display rotation itself and only stands down when a target
+        // rotation is set explicitly — setting it here handed the job to our
+        // OrientationEventListener, which does not fire on a 180-degree flip.
+        val newPreview = Preview.Builder().build().apply {
+            previewView?.let { surfaceProvider = it.surfaceProvider }
+        }
 
         val newCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
@@ -161,13 +167,32 @@ class FilmCameraController(
                 }
                 if (rotation != targetRotation) {
                     targetRotation = rotation
-                    preview?.targetRotation = rotation
+                    // Only ImageCapture: PreviewView owns the preview rotation.
                     imageCapture?.targetRotation = rotation
                 }
             }
         }
         orientationListener = listener
         if (listener.canDetectOrientation()) listener.enable()
+
+        // A 180-degree flip does not always recreate the activity or fire the
+        // orientation listener in time, so watch the display too.
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager ?: return
+        val displayListener = object : DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) {}
+            override fun onDisplayRemoved(displayId: Int) {}
+
+            override fun onDisplayChanged(displayId: Int) {
+                val r = currentRotation()
+                if (r != targetRotation) {
+                    targetRotation = r
+                    imageCapture?.targetRotation = r
+                }
+            }
+        }
+        dm.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
+        displayManager = dm
+        this.displayListener = displayListener
     }
 
     private fun attachGestures(view: PreviewView) {
@@ -329,6 +354,11 @@ class FilmCameraController(
     fun release() {
         orientationListener?.disable()
         orientationListener = null
+        displayListener?.let { l ->
+            displayManager?.unregisterDisplayListener(l)
+        }
+        displayListener = null
+        displayManager = null
         previewView?.setOnTouchListener(null)
         scaleDetector = null
         cameraProvider?.unbindAll()

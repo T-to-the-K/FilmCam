@@ -10,7 +10,7 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.2.0. It shoots real photos through CameraX and the selected film look is applied to the saved photo.
+This is v0.3.0. It shoots real photos through CameraX and the selected film look is applied to the saved photo.
 
 **Known limitation, still true:** the live preview is the raw camera feed. The film grade lands on the saved photo, not in the viewfinder — so what you see while shooting is plainer than what ends up in your gallery. Wiring the GLES look into the preview surface is the next piece of work; the shader is already written (`gl/FilmShader.kt`) and ready to drive the preview.
 
@@ -25,6 +25,10 @@ This is v0.2.0. It shoots real photos through CameraX and the selected film look
 | `☀` | Torch |
 | `⟳` | Flip between the front and back lens |
 | Shutter | Shoot |
+
+The layout is orientation-aware. Portrait keeps the control cluster along the
+bottom edge; landscape moves it into a right-hand column, because in landscape
+the right edge is where the thumb already is.
 
 ## The film looks
 
@@ -102,6 +106,8 @@ app/src/main/java/com/tk/filmcam/
 ## Roadmap
 
 - [x] Zoom (pinch + buttons, ratio readout), flash, torch, working lens flip
+- [x] Look strength retuned so every film is visibly distinct (measured, not guessed)
+- [x] Orientation-aware layout, portrait lock removed
 - [ ] Wire the GLES look into the live preview
 - [ ] Preview thumbnails per film look
 - [ ] Frame counter per film type (24/36 exposures)

@@ -15,10 +15,11 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.FilmCam">
 
+        <!-- No screenOrientation lock: the layout reflows for landscape and puts
+             the controls in the thumb zone on the right-hand edge. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density"
             android:theme="@style/Theme.FilmCam">
             <intent-filter>
