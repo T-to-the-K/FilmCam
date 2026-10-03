@@ -10,6 +10,11 @@
     <string name="saved_to_gallery">Saved to gallery</string>
     <string name="camera_permission_required">Camera permission is required to take photos</string>
     <string name="saving">Saving…</string>
+    <string name="zoom_readout">%1$.1f×</string>
+    <string name="cd_zoom_in">Zoom in</string>
+    <string name="cd_zoom_out">Zoom out</string>
+    <string name="cd_flash">Flash</string>
+    <string name="cd_torch">Torch</string>
     <string name="film_ccd">CCD</string>
     <string name="film_135">135</string>
     <string name="film_120">120</string>

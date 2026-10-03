@@ -18,8 +18,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,8 +38,11 @@ import com.tk.filmcam.camera.FilmCameraController
 import com.tk.filmcam.film.FilmCamera
 import com.tk.filmcam.ui.FilmPicker
 import com.tk.filmcam.ui.FlipButton
+import com.tk.filmcam.ui.IconPill
 import com.tk.filmcam.ui.ShutterButton
+import com.tk.filmcam.ui.Spacer8
 import com.tk.filmcam.ui.StatusBar
+import com.tk.filmcam.ui.ZoomReadout
 import com.tk.filmcam.ui.theme.FilmCamTheme
 
 class MainActivity : ComponentActivity() {
@@ -81,14 +86,32 @@ private fun FilmCamScreen(
     var status by remember { mutableStateOf("") }
     var previewKey by remember { mutableStateOf(0) }
     var saving by remember { mutableStateOf(false) }
+    var zoom by remember { mutableStateOf(1f) }
+    var canZoomOut by remember { mutableStateOf(false) }
+    var canZoomIn by remember { mutableStateOf(false) }
+    var torchOn by remember { mutableStateOf(false) }
+    var flashOn by remember { mutableStateOf(false) }
 
     val controller = remember {
         FilmCameraController(context, lifecycleOwner)
     }
 
+    DisposableEffect(controller) {
+        controller.setOnZoomChanged { ratio ->
+            zoom = ratio
+            canZoomOut = ratio > controller.minZoomRatio + 0.01f
+            canZoomIn = ratio < controller.maxZoomRatio - 0.01f
+        }
+        onDispose { controller.release() }
+    }
+
     val savedMessage = stringResource(R.string.saved_to_gallery)
     val permissionMessage = stringResource(R.string.camera_permission_required)
     val savingMessage = stringResource(R.string.saving)
+    val zoomInDesc = stringResource(R.string.cd_zoom_in)
+    val zoomOutDesc = stringResource(R.string.cd_zoom_out)
+    val flashDesc = stringResource(R.string.cd_flash)
+    val torchDesc = stringResource(R.string.cd_torch)
 
     LaunchedEffect(Unit) {
         if (!permissionGranted) onRequestPermission()
@@ -100,18 +123,20 @@ private fun FilmCamScreen(
             .background(Color.Black)
     ) {
         if (permissionGranted) {
-            AndroidView(
-                factory = { ctx ->
-                    PreviewView(ctx).apply {
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        controller.bindPreview(this) { error ->
-                            if (error.isNotEmpty()) status = error
+            key(previewKey) {
+                AndroidView(
+                    factory = { ctx ->
+                        PreviewView(ctx).apply {
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                            controller.bindPreview(this) { error ->
+                                if (error.isNotEmpty()) status = error
+                            }
                         }
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         } else {
             Box(
                 modifier = Modifier
@@ -138,20 +163,53 @@ private fun FilmCamScreen(
                     selected = selectedFilm,
                     onSelect = { selectedFilm = it }
                 )
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 18.dp),
+                        .padding(bottom = 10.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconPill(
+                        label = "−",
+                        desc = zoomOutDesc,
+                        enabled = canZoomOut,
+                        onClick = { controller.stepZoom(-1f) }
+                    )
+                    Spacer8()
+                    ZoomReadout(zoom = zoom)
+                    Spacer8()
+                    IconPill(
+                        label = "+",
+                        desc = zoomInDesc,
+                        enabled = canZoomIn,
+                        onClick = { controller.stepZoom(1f) }
+                    )
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 24.dp, end = 24.dp, bottom = 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    FlipButton(
-                        onClick = {
-                            controller.flip { }
-                            previewKey++
-                            status = ""
-                        }
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconPill(
+                            label = "⚡",
+                            desc = flashDesc,
+                            active = flashOn,
+                            onClick = { flashOn = controller.toggleFlash() }
+                        )
+                        Spacer8()
+                        IconPill(
+                            label = "☀",
+                            desc = torchDesc,
+                            active = torchOn,
+                            onClick = { torchOn = controller.toggleTorch() }
+                        )
+                    }
                     ShutterButton(
                         enabled = permissionGranted && !saving,
                         onClick = {
@@ -167,7 +225,13 @@ private fun FilmCamScreen(
                             }
                         }
                     )
-                    Box(modifier = Modifier.padding(horizontal = 18.dp))
+                    FlipButton(
+                        onClick = {
+                            controller.flip { }
+                            previewKey++
+                            status = ""
+                        }
+                    )
                 }
             }
         }

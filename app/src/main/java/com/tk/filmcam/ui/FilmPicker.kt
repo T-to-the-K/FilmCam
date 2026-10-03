@@ -174,6 +174,55 @@ fun FlipButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
 }
 
 @Composable
+fun IconPill(
+    label: String,
+    desc: String,
+    active: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val tint by animateColorAsState(
+        targetValue = when {
+            !enabled -> Color.White.copy(alpha = 0.25f)
+            active -> Color(0xFFFFC24B)
+            else -> Color.White
+        },
+        label = "pillTint"
+    )
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .background(
+                if (active) Color(0x33FFC24B) else Color.Black.copy(alpha = 0.4f),
+                RoundedCornerShape(19.dp)
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics { contentDescription = desc },
+        contentAlignment = Alignment.Center
+    ) {
+        Text(label, color = tint, fontSize = 15.sp)
+    }
+}
+
+@Composable
+fun ZoomReadout(zoom: Float, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .height(38.dp)
+            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(19.dp))
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            stringResource(R.string.zoom_readout, zoom),
+            color = Color.White,
+            fontSize = 13.sp
+        )
+    }
+}
+
+@Composable
 fun StatusBar(message: String, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier

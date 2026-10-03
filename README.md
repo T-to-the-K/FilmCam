@@ -10,9 +10,21 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.1.0. It compiles and installs, and it shoots real photos through CameraX with the selected film look applied on save.
+This is v0.2.0. It shoots real photos through CameraX and the selected film look is applied to the saved photo.
 
-**Known limitation in this build:** the live preview is currently the raw camera feed. The film grade is applied when the photo is saved, so what you see in the viewfinder is plainer than what lands in your gallery. Wiring the GLES look into the preview surface is the next piece of work — the shader is already written (`gl/FilmShader.kt`) and ready to drive the preview.
+**Known limitation, still true:** the live preview is the raw camera feed. The film grade lands on the saved photo, not in the viewfinder — so what you see while shooting is plainer than what ends up in your gallery. Wiring the GLES look into the preview surface is the next piece of work; the shader is already written (`gl/FilmShader.kt`) and ready to drive the preview.
+
+## Controls
+
+| Gesture / control | What it does |
+|---|---|
+| Tap a film in the strip | Switch the look applied on save |
+| Pinch the viewfinder | Zoom, following the device's own zoom range |
+| `−` / `+` | Step the zoom; the pill between them shows the current ratio |
+| `⚡` | Flash on stills |
+| `☀` | Torch |
+| `⟳` | Flip between the front and back lens |
+| Shutter | Shoot |
 
 ## The film looks
 
@@ -43,7 +55,7 @@ Each look is a parameter set in `film/FilmCamera.kt`, not a hardcoded branch. Ad
 Two implementations, one look:
 
 - `gl/FilmShader.kt` — GLSL fragment shader for the real-time preview
-- `pipeline/FilmStillProcessor.kt` — CPU `ColorMatrix` path for the saved photo, so the file you keep matches what you framed
+- `pipeline/FilmStillProcessor.kt` — CPU path for the saved photo: tonality and colour via `ColorMatrix`, then highlight-extract bloom, quarter-resolution grain weighted to the midtones, then vignette
 
 ## Privacy
 
@@ -89,6 +101,7 @@ app/src/main/java/com/tk/filmcam/
 
 ## Roadmap
 
+- [x] Zoom (pinch + buttons, ratio readout), flash, torch, working lens flip
 - [ ] Wire the GLES look into the live preview
 - [ ] Preview thumbnails per film look
 - [ ] Frame counter per film type (24/36 exposures)
