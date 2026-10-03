@@ -10,16 +10,23 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.5.1. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
+This is v0.5.2. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
 
-v0.5.1 fixes the viewfinder. The `SurfaceTexture` frame-available listener was
-never registered, so the GL surface only redrew when the look or the rotation
-changed — a black screen, then a slideshow. The grade shader was also taking 13
-samples per pixel on an external texture, with `cos`/`sin` inside an 8-tap
-halation loop, which is a fill-rate wall: 5 taps, no trigonometry, a 720p camera
-buffer, and a surface capped at 1280px on the long edge that SurfaceFlinger
-scales up. The grade itself is untouched, so saved photos are byte-identical to
-v0.5.0.
+v0.5.2 fixes a launch crash in v0.5.1. The grade shader asked for `highp` in the
+fragment stage, which is optional in GLES2 and is a compile error rather than a
+downgrade on drivers that lack it — and a failed compile was killing the process
+instead of falling back. GL setup failures are now reported to the UI, the view
+swaps to an ungraded `PreviewView`, and the reason is printed on screen. The
+shader guards its precision behind `GL_FRAGMENT_PRECISION_HIGH`, and the holder
+is no longer resized from inside the layout pass.
+
+v0.5.1 fixed the viewfinder itself. The `SurfaceTexture` frame-available
+listener was never registered, so the GL surface only redrew when the look or
+the rotation changed — a black screen, then a slideshow. The grade shader was
+also taking 13 samples per pixel on an external texture, with `cos`/`sin` inside
+an 8-tap halation loop, which is a fill-rate wall: 5 taps, no trigonometry, a
+720p camera buffer, and a surface capped at 1280px that SurfaceFlinger scales
+up. The grade itself is untouched, so saved photos are identical to v0.5.0.
 
 The live frame rate is shown next to the zoom readout.
 

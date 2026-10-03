@@ -53,6 +53,11 @@ class FilmGlPreview(
         renderer.onSurfaceTextureReady = { texture ->
             mainHandler.post { onTextureAvailable(texture) }
         }
+        renderer.onGlError = { reason ->
+            // GL thread. The fallback swaps this view out for a PreviewView, and
+            // Compose state may only be written from the main thread.
+            mainHandler.post { onFatal(reason) }
+        }
         renderer.setRetiredTextureListener { texture ->
             // GL thread: the texture it just swapped out. CameraX may still be
             // writing into it, so hold it until its completion callback fires.
@@ -95,21 +100,28 @@ class FilmGlPreview(
      */
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        applyRenderScale(w, h)
+        if (released || w <= 0 || h <= 0) return
+        // Never resize the holder from inside the layout pass. setFixedSize
+        // changes the surface, which re-enters layout on some OEM builds, and
+        // doing that synchronously from onSizeChanged is how you get a view
+        // that kills the activity the moment the permission is granted.
+        mainHandler.post { applyRenderScale(w, h) }
     }
 
     private fun applyRenderScale(w: Int, h: Int) {
         if (released || w <= 0 || h <= 0) return
         val longEdge = maxOf(w, h)
-        if (longEdge <= MAX_RENDER_EDGE) {
-            holder.setSizeFromLayout()
-            return
+        runCatching {
+            if (longEdge <= MAX_RENDER_EDGE) {
+                holder.setSizeFromLayout()
+            } else {
+                val scale = MAX_RENDER_EDGE.toFloat() / longEdge
+                holder.setFixedSize(
+                    maxOf(1, (w * scale).toInt()),
+                    maxOf(1, (h * scale).toInt())
+                )
+            }
         }
-        val scale = MAX_RENDER_EDGE.toFloat() / longEdge
-        holder.setFixedSize(
-            maxOf(1, (w * scale).toInt()),
-            maxOf(1, (h * scale).toInt())
-        )
     }
 
     override fun onSurfaceRequested(request: SurfaceRequest) {
@@ -179,7 +191,7 @@ class FilmGlPreview(
         currentTexture = null
         drainRetired()
         queueEvent { renderer.onSurfaceDestroyed() }
-        holder.setSizeFromLayout()
+        runCatching { holder.setSizeFromLayout() }
     }
 
     private companion object {

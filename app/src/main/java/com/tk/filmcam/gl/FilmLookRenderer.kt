@@ -59,6 +59,16 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     /** Called on the GL thread once a SurfaceTexture of the requested size exists. */
     @Volatile var onSurfaceTextureReady: ((SurfaceTexture) -> Unit)? = null
 
+    /**
+     * Called on the GL thread when GL setup fails, instead of throwing.
+     *
+     * This was `error(...)`, which is an uncaught exception on the GL thread and
+     * takes the process down with it. A phone that cannot compile the grade
+     * shader should show an ungraded viewfinder and a line of text, not refuse
+     * to open — v0.5.1 refused to open.
+     */
+    @Volatile var onGlError: ((String) -> Unit)? = null
+
     @Volatile private var pendingWidth = 0
     @Volatile private var pendingHeight = 0
 
@@ -76,6 +86,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
 
     private var framesInWindow = 0
     private var windowStartNanos = 0L
+    private var fatalReported = false
 
     /**
      * Frames drawn per second, sampled on the GL thread over one-second windows.
@@ -96,8 +107,19 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     )
 
     override fun onSurfaceCreated(gl: GL10, config: EGLConfig?) {
-        program = buildProgram(FilmShader.VERTEX, FilmShader.FRAGMENT)
+        try {
+            program = buildProgram(FilmShader.VERTEX, FilmShader.FRAGMENT)
+            createExternalTexture()
+        } catch (e: Throwable) {
+            // GLES20 raises no exceptions on its own, so this is our own guard:
+            // a failed compile or link has to become a message the UI can show.
+            reportFatal("GL setup failed: ${e.message ?: e.javaClass.simpleName}")
+            return
+        }
+        startNanos = System.nanoTime()
+    }
 
+    private fun createExternalTexture() {
         val ids = IntArray(1)
         GLES20.glGenTextures(1, ids, 0)
         externalTexture = ids[0]
@@ -123,8 +145,13 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
             GLES20.GL_CLAMP_TO_EDGE
         )
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
+    }
 
-        startNanos = System.nanoTime()
+    private fun reportFatal(reason: String) {
+        if (fatalReported) return
+        fatalReported = true
+        program = 0
+        onGlError?.invoke(reason)
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
@@ -141,15 +168,22 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     }
 
     override fun onDrawFrame(gl: GL10) {
-        maybeCreateSurfaceTexture()
-        sampleFps()
+        try {
+            maybeCreateSurfaceTexture()
+            sampleFps()
 
-        // No SurfaceTexture transform here: updateTexImage copies the buffer in
-        // its native sensor orientation, and every rotation, mirror and crop is
-        // applied by the shader's uTransform. SurfaceTexture.setTransform is not
-        // public API anyway, so this is the only correct route.
-        cameraTexture?.updateTexImage()
-        draw()
+            // No SurfaceTexture transform here: updateTexImage copies the buffer
+            // in its native sensor orientation, and every rotation, mirror and
+            // crop is applied by the shader's uTransform. setTransform is not
+            // public API anyway, so this is the only correct route.
+            cameraTexture?.updateTexImage()
+            draw()
+        } catch (e: Throwable) {
+            // Last line of defence. Anything escaping onDrawFrame is an
+            // uncaught exception on the GL thread, and that ends the process
+            // rather than the viewfinder.
+            reportFatal("Draw failed: ${e.message ?: e.javaClass.simpleName}")
+        }
     }
 
     private fun sampleFps() {
@@ -211,6 +245,15 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         GLES20.glUseProgram(program)
         GLES20.glClearColor(0f, 0f, 0f, 1f)
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+
+        // No program means setup already failed and the view is being swapped
+        // for an ungraded PreviewView. Clear and stop; every glUniform* below
+        // with an unset location is at best a no-op and at worst an error the
+        // driver decides to treat fatally.
+        if (program == 0 || externalTexture == 0) {
+            GLES20.glUseProgram(0)
+            return
+        }
 
         val texture = cameraTexture
         if (texture == null) {
