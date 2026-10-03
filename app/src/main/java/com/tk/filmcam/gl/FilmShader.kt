@@ -25,7 +25,7 @@ object FilmShader {
 attribute vec4 aPosition;
 attribute vec2 aTexCoord;
 uniform mat3 uTransform;
-varying vec2 vTexCoord;
+varying mediump vec2 vTexCoord;
 void main() {
     vec3 t = uTransform * vec3(aTexCoord, 1.0);
     vTexCoord = t.xy;
@@ -35,9 +35,9 @@ void main() {
 
     val FRAGMENT: String = """
 #extension GL_OES_EGL_image_external : require
-precision highp float;
+precision mediump float;
 
-varying vec2 vTexCoord;
+varying mediump vec2 vTexCoord;
 
 uniform samplerExternalOES uTex;
 uniform vec2  uTexSize;      // camera buffer size, in pixels
@@ -59,8 +59,10 @@ uniform float uSoftness;
 
 const vec3 LUMA = vec3($LUMA_R, $LUMA_G, $LUMA_B);
 
-float hash12(vec2 p) {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+// highp: grain needs more than the 10 mantissa bits mediump guarantees, or the
+// hash quantises into visible 2-pixel blocks at viewfinder resolutions.
+highp float hash12(highp vec2 p) {
+    highp vec3 p3 = fract(vec3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.x + p3.y) * p3.z);
 }
@@ -86,27 +88,34 @@ void main() {
     vec2 uv = vTexCoord;
     vec2 texel = 1.0 / uTexSize;
 
-    // --- optical softness: cheap 5-tap cross blur, only when the look wants it
     vec3 color = sampleTex(uv);
-    if (uSoftness > 0.001) {
-        vec3 blur = color * 0.36;
-        blur += sampleTex(uv + vec2(texel.x, 0.0) * 2.0) * 0.16;
-        blur += sampleTex(uv - vec2(texel.x, 0.0) * 2.0) * 0.16;
-        blur += sampleTex(uv + vec2(0.0, texel.y) * 2.0) * 0.16;
-        blur += sampleTex(uv - vec2(0.0, texel.y) * 2.0) * 0.16;
-        color = mix(color, blur, uSoftness);
-    }
 
-    // --- halation: highlights bleed sideways, the CCD signature
-    if (uHalation > 0.001) {
-        vec3 bleed = vec3(0.0);
-        float radius = 4.0;
-        for (int i = 0; i < 8; i++) {
-            float a = float(i) * 0.7853981634;
-            vec3 s = sampleTex(uv + vec2(cos(a), sin(a)) * texel * radius);
-            bleed += max(vec3(0.0), s - 0.62) * smoothstep(0.62, 1.0, dot(s, LUMA));
+    // --- the optical passes, as one ring of four taps shared by both.
+    //
+    // This used to be 13 samples per pixel: a 5-tap cross for softness plus an
+    // 8-tap halation ring with cos/sin evaluated inside the loop. On a
+    // samplerExternalOES that is the whole frame budget, and the viewfinder ran
+    // at one or two frames a second. Four unrolled taps at constant offsets,
+    // reused for the blur and the bleed, and no trigonometry at all.
+    if (uSoftness > 0.001 || uHalation > 0.001) {
+        vec2 r = texel * 3.0;
+        vec3 n0 = sampleTex(uv + vec2( r.x, 0.0));
+        vec3 n1 = sampleTex(uv + vec2(-r.x, 0.0));
+        vec3 n2 = sampleTex(uv + vec2( 0.0,  r.y));
+        vec3 n3 = sampleTex(uv + vec2( 0.0, -r.y));
+        vec3 ring = (n0 + n1 + n2 + n3) * 0.25;
+
+        if (uSoftness > 0.001) {
+            color = mix(color, ring, uSoftness * 0.55);
         }
-        color += (bleed / 8.0) * uHalation * 1.6;
+        if (uHalation > 0.001) {
+            // highlights only, luma-gated exactly as the 8-tap version was
+            vec3 bleed = max(vec3(0.0), n0 - 0.62) * smoothstep1((dot(n0, LUMA) - 0.62) / 0.38)
+                       + max(vec3(0.0), n1 - 0.62) * smoothstep1((dot(n1, LUMA) - 0.62) / 0.38)
+                       + max(vec3(0.0), n2 - 0.62) * smoothstep1((dot(n2, LUMA) - 0.62) / 0.38)
+                       + max(vec3(0.0), n3 - 0.62) * smoothstep1((dot(n3, LUMA) - 0.62) / 0.38);
+            color += (bleed * 0.25) * uHalation * 1.6;
+        }
     }
 
     // --- 1. gains and warmth
@@ -144,9 +153,13 @@ void main() {
     }
 
     // --- 6. grain, weighted to the midtones like real emulsion, and animated
-    //        so the viewfinder reads as film rather than as a still image
+    //        so the viewfinder reads as film rather than as a still image.
+    //        Keyed off the fragment coordinate rather than uv * uTexSize: grain
+    //        has to stay one grain per output pixel or it aliases into moire
+    //        once the surface is scaled down below the camera resolution.
     if (uGrain > 0.001) {
-        float g = hash12(uv * uTexSize + vec2(uTime * 61.7, uTime * 37.3));
+        highp vec2 gp = highp vec2(gl_FragCoord.xy) + vec2(uTime * 61.7, uTime * 37.3);
+        float g = hash12(gp);
         float midWeight = max(1.0 - abs(l - 0.5) * 1.7, 0.2);
         color += (g - 0.5) * uGrain * 0.42 * midWeight;
     }

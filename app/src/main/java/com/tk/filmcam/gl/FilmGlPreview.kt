@@ -21,8 +21,10 @@ import java.util.concurrent.Executor
  *
  * Rendering is on-demand (`RENDERMODE_WHEN_DIRTY`): a frame is drawn when the
  * camera delivers one, when the look changes, or when the rotation changes.
- * A continuously animating grain shader would otherwise burn battery for no
- * visible benefit between shots.
+ * The [SurfaceTexture.OnFrameAvailableListener] is what drives it, so every new
+ * camera buffer must have its listener registered or the viewfinder freezes.
+ * Drawing stops when there is nothing to draw instead of spinning the GL thread
+ * on an animated grain shader.
  *
  * @param onFatal called with a reason if GL setup fails, so the caller can fall
  *        back to an ungraded preview instead of showing a black rectangle.
@@ -78,6 +80,38 @@ class FilmGlPreview(
         requestRender()
     }
 
+    /** Measured viewfinder frame rate. See [FilmLookRenderer.fps]. */
+    val fps: Int get() = renderer.fps
+
+    /**
+     * Cap the surface the GL thread actually renders into.
+     *
+     * The grade is a per-pixel fragment shader over an external texture, so the
+     * cost scales with the surface area. A 1080x2400 view is 2.6M shaded pixels
+     * a frame, which a mid-range phone cannot hold at 30 fps with any multi-tap
+     * pass. Rendering at 720p and letting SurfaceFlinger scale the result up is
+     * what the compositor is for; the viewfinder stays sharp because it is
+     * scaled, not resampled in the shader.
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        applyRenderScale(w, h)
+    }
+
+    private fun applyRenderScale(w: Int, h: Int) {
+        if (released || w <= 0 || h <= 0) return
+        val longEdge = maxOf(w, h)
+        if (longEdge <= MAX_RENDER_EDGE) {
+            holder.setSizeFromLayout()
+            return
+        }
+        val scale = MAX_RENDER_EDGE.toFloat() / longEdge
+        holder.setFixedSize(
+            maxOf(1, (w * scale).toInt()),
+            maxOf(1, (h * scale).toInt())
+        )
+    }
+
     override fun onSurfaceRequested(request: SurfaceRequest) {
         if (released) {
             request.willNotProvideSurface()
@@ -91,6 +125,12 @@ class FilmGlPreview(
     }
 
     private fun onTextureAvailable(texture: SurfaceTexture) {
+        // Every texture the renderer creates comes through here, including the
+        // replacements it swaps in on a resolution change. Register before the
+        // early returns below, or a swapped-in texture never gets redraws and
+        // the viewfinder stalls on a stale (or empty) buffer.
+        texture.setOnFrameAvailableListener(this, mainHandler)
+
         val request = pendingRequest ?: return
         if (request.resolution.width != renderer.cameraWidth ||
             request.resolution.height != renderer.cameraHeight
@@ -139,5 +179,11 @@ class FilmGlPreview(
         currentTexture = null
         drainRetired()
         queueEvent { renderer.onSurfaceDestroyed() }
+        holder.setSizeFromLayout()
+    }
+
+    private companion object {
+        /** Longest edge of the surface we actually shade, in pixels. */
+        const val MAX_RENDER_EDGE = 1280
     }
 }

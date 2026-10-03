@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -55,6 +56,7 @@ import com.tk.filmcam.ui.Spacer8
 import com.tk.filmcam.ui.StatusBar
 import com.tk.filmcam.ui.ZoomReadout
 import com.tk.filmcam.ui.theme.FilmCamTheme
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
 
@@ -103,6 +105,7 @@ private fun FilmCamScreen(
     var canZoomIn by remember { mutableStateOf(false) }
     var torchOn by remember { mutableStateOf(false) }
     var flashOn by remember { mutableStateOf(false) }
+    var fps by remember { mutableStateOf(0) }
 
     val controller = remember {
         FilmCameraController(context, lifecycleOwner)
@@ -114,6 +117,16 @@ private fun FilmCamScreen(
     // viewfinder shows the filter while it is selected.
     LaunchedEffect(selectedFilm) {
         previewHolder.value?.film = selectedFilm
+    }
+
+    // Live frame rate, sampled off the GL thread. Cheap enough to poll twice a
+    // second and the only way to tell a stalled preview from a slow one.
+    LaunchedEffect(previewHolder.value) {
+        val view = previewHolder.value ?: return@LaunchedEffect
+        while (true) {
+            fps = view.fps
+            delay(500)
+        }
     }
 
     DisposableEffect(controller) {
@@ -241,6 +254,8 @@ private fun FilmCamScreen(
                             enabled = canZoomIn,
                             onClick = { controller.stepZoom(1f) }
                         )
+                        Spacer8()
+                        FpsReadout(fps)
                     }
 
                     Spacer(Modifier.height(10.dp))
@@ -331,6 +346,8 @@ private fun FilmCamScreen(
                             enabled = canZoomIn,
                             onClick = { controller.stepZoom(1f) }
                         )
+                        Spacer8()
+                        FpsReadout(fps)
                     }
 
                     Row(
@@ -395,4 +412,13 @@ private fun FilmCamScreen(
 @Composable
 private fun Text2(text: String) {
     androidx.compose.material3.Text(text = text, color = Color.White)
+}
+
+@Composable
+private fun FpsReadout(fps: Int) {
+    androidx.compose.material3.Text(
+        text = "$fps fps",
+        color = Color(0xFF8A8A8A),
+        fontSize = 10.sp
+    )
 }

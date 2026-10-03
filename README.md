@@ -10,7 +10,18 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.5.0. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
+This is v0.5.1. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
+
+v0.5.1 fixes the viewfinder. The `SurfaceTexture` frame-available listener was
+never registered, so the GL surface only redrew when the look or the rotation
+changed — a black screen, then a slideshow. The grade shader was also taking 13
+samples per pixel on an external texture, with `cos`/`sin` inside an 8-tap
+halation loop, which is a fill-rate wall: 5 taps, no trigonometry, a 720p camera
+buffer, and a surface capped at 1280px on the long edge that SurfaceFlinger
+scales up. The grade itself is untouched, so saved photos are byte-identical to
+v0.5.0.
+
+The live frame rate is shown next to the zoom readout.
 
 ## Controls
 

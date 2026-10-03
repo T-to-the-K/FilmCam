@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.util.Size
 import android.view.OrientationEventListener
 import android.view.ScaleGestureDetector
 import android.view.Surface
@@ -20,6 +21,8 @@ import androidx.camera.core.ImageCaptureException
 import android.hardware.camera2.CameraCharacteristics
 import androidx.camera.core.Preview
 import androidx.camera.core.ZoomState
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
@@ -48,6 +51,10 @@ class FilmCameraController(
     private companion object {
         /** Longest edge we will grade at. ~12 MP, plenty for a phone photo. */
         const val MAX_EDGE = 3500
+
+        /** Viewfinder buffer. The GL preview shades every one of these pixels. */
+        const val PREVIEW_WIDTH = 1280
+        const val PREVIEW_HEIGHT = 720
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -123,9 +130,27 @@ class FilmCameraController(
         // in sensor orientation and FilmGlPreview rotates it in the shader, so
         // the 180-degree flip that OrientationEventListener misses is handled
         // by the display listener like every other rotation.
-        val newPreview = Preview.Builder().build().apply {
-            previewProvider?.let { setSurfaceProvider(it) }
-        }
+        //
+        // The preview is also pinned to 720p. FilmGlPreview shades every pixel of
+        // this buffer through the film grade on the GPU, and the full-resolution
+        // stream costs several times the fill rate for a viewfinder nobody is
+        // printing from. ImageCapture keeps its own full-resolution setting, so
+        // the saved photo is unaffected.
+        val newPreview = Preview.Builder()
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(PREVIEW_WIDTH, PREVIEW_HEIGHT),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                        )
+                    )
+                    .build()
+            )
+            .build()
+            .apply {
+                previewProvider?.let { setSurfaceProvider(it) }
+            }
 
         val newCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
@@ -390,9 +415,7 @@ class FilmCameraController(
         }
 
         var sample = 1
-        while (bounds.outWidth / (sample * 2) >= MAX_EDGE &&
-            bounds.outHeight / (sample * 2) >= MAX_EDGE
-        ) {
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_EDGE) {
             sample *= 2
         }
 

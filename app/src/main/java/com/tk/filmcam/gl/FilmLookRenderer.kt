@@ -74,6 +74,21 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
 
     private var textureListener: ((SurfaceTexture) -> Unit)? = null
 
+    private var framesInWindow = 0
+    private var windowStartNanos = 0L
+
+    /**
+     * Frames drawn per second, sampled on the GL thread over one-second windows.
+     *
+     * Read from the UI thread. It is here because the viewfinder's frame rate is
+     * the one number that cannot be checked off-device: without a device
+     * attached, "the preview feels slow" is the only symptom available, and the
+     * difference between a missing frame listener and a fill-rate problem is
+     * invisible in a screenshot.
+     */
+    @Volatile var fps: Int = 0
+        private set
+
     data class LensInfo(
         val sensorOrientation: Int = 90,
         val displayRotation: Int = 0,
@@ -127,6 +142,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10) {
         maybeCreateSurfaceTexture()
+        sampleFps()
 
         // No SurfaceTexture transform here: updateTexImage copies the buffer in
         // its native sensor orientation, and every rotation, mirror and crop is
@@ -134,6 +150,19 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         // public API anyway, so this is the only correct route.
         cameraTexture?.updateTexImage()
         draw()
+    }
+
+    private fun sampleFps() {
+        val now = System.nanoTime()
+        if (windowStartNanos == 0L) {
+            windowStartNanos = now
+        }
+        framesInWindow++
+        val elapsed = now - windowStartNanos
+        if (elapsed < 1_000_000_000L) return
+        fps = (framesInWindow * 1_000_000_000L / elapsed).toInt()
+        framesInWindow = 0
+        windowStartNanos = now
     }
 
     /**
