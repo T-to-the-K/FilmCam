@@ -10,15 +10,26 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.5.2. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
+This is v0.5.3. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
 
-v0.5.2 fixes a launch crash in v0.5.1. The grade shader asked for `highp` in the
-fragment stage, which is optional in GLES2 and is a compile error rather than a
-downgrade on drivers that lack it — and a failed compile was killing the process
-instead of falling back. GL setup failures are now reported to the UI, the view
-swaps to an ungraded `PreviewView`, and the reason is printed on screen. The
-shader guards its precision behind `GL_FRAGMENT_PRECISION_HIGH`, and the holder
-is no longer resized from inside the layout pass.
+v0.5.3 fixes the crash v0.5.2 was still hiding. That release guarded the
+fragment precision with `#ifdef GL_FRAGMENT_PRECISION_HIGH` and a
+`#define`, and the driver's preprocessor expanded the macro to `highhp`, so the
+shader was rejected on a phone where nothing was wrong with it. The shader now
+contains no preprocessor conditionals at all: the renderer compiles a two-line
+probe to find out whether this GPU really does fragment `highp`, and passes the
+answer into the shader as a plain `precision` statement. If the full shader
+still fails, the other precision is tried before the UI is told anything, and
+both driver logs are reported if neither works.
+
+v0.5.2 fixed a launch crash in v0.5.1, and its error reporting is what made
+v0.5.3 findable: the app showed the driver's own compile log instead of dying.
+The grade shader asked for `highp` in the fragment stage, which is optional in
+GLES2 and is a compile error rather than a downgrade on drivers that lack it —
+and a failed compile was killing the process instead of falling back. GL setup
+failures are now reported to the UI, the view swaps to an ungraded
+`PreviewView`, and the reason is printed on screen. The holder is no longer
+resized from inside the layout pass.
 
 v0.5.1 fixed the viewfinder itself. The `SurfaceTexture` frame-available
 listener was never registered, so the GL surface only redrew when the look or

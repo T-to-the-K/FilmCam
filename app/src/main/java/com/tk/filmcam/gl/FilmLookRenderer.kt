@@ -108,7 +108,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
 
     override fun onSurfaceCreated(gl: GL10, config: EGLConfig?) {
         try {
-            program = buildProgram(FilmShader.VERTEX, FilmShader.FRAGMENT)
+            program = buildProgramWithPrecisionFallback()
             createExternalTexture()
         } catch (e: Throwable) {
             // GLES20 raises no exceptions on its own, so this is our own guard:
@@ -321,6 +321,45 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         }
     }
 
+    /**
+     * Compiles the grade program, trying the fragment precision this driver
+     * claims to support first and the other one second.
+     *
+     * The probe is a real compile rather than a query of
+     * `GL_FRAGMENT_PRECISION_HIGH`, because that macro lies on at least one
+     * driver: it accepts the probe and then rejects the full shader with the
+     * macro name spliced into a precision qualifier. If both attempts fail, both
+     * driver logs are reported, since one of them is usually the real cause.
+     */
+    private fun buildProgramWithPrecisionFallback(): Int {
+        val probed = if (fragmentHighPrecision()) "highp" else "mediump"
+        val order = listOf(probed, if (probed == "highp") "mediump" else "highp")
+        val failures = StringBuilder()
+        for (precision in order) {
+            try {
+                return buildProgram(FilmShader.VERTEX, FilmShader.fragment(precision))
+            } catch (e: Throwable) {
+                failures.append(precision).append(": ")
+                    .append(e.message ?: e.javaClass.simpleName).append('\n')
+            }
+        }
+        error("no usable fragment precision\n$failures")
+    }
+
+    private fun fragmentHighPrecision(): Boolean {
+        val shader = GLES20.glCreateShader(GLES20.GL_FRAGMENT_SHADER)
+        if (shader == 0) return false
+        return try {
+            GLES20.glShaderSource(shader, HIGH_PRECISION_PROBE)
+            GLES20.glCompileShader(shader)
+            val status = IntArray(1)
+            GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, status, 0)
+            status[0] != 0
+        } finally {
+            GLES20.glDeleteShader(shader)
+        }
+    }
+
     private fun buildProgram(vertexSrc: String, fragmentSrc: String): Int {
         val vertexShader = compileShader(GLES20.GL_VERTEX_SHADER, vertexSrc)
         val fragmentShader = compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentSrc)
@@ -378,6 +417,9 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     }
 
     private companion object {
+        const val HIGH_PRECISION_PROBE =
+            "precision highp float;\nvoid main() { gl_FragColor = vec4(0.0); }\n"
+
         val QUAD: FloatBuffer = floatBufferOf(
             -1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f
         )

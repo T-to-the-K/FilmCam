@@ -33,19 +33,20 @@ void main() {
 }
 """
 
-    val FRAGMENT: String = """
+    /**
+     * Builds the fragment shader for a given default float precision.
+     *
+     * No preprocessor conditionals are used in this shader on purpose. Drivers
+     * disagree about `#ifdef GL_FRAGMENT_PRECISION_HIGH` — one shipped build
+     * expanded a `#define GRAIN_PRECISION highp` into `highhp` and rejected the
+     * whole program. The precision is probed at runtime instead
+     * (see `FilmLookRenderer.fragmentHighPrecision`), so the only conditional
+     * decision happens in Kotlin, and the renderer retries the other precision
+     * if this shader still fails to compile.
+     */
+    fun fragment(precisionQualifier: String): String = """
 #extension GL_OES_EGL_image_external : require
-precision mediump float;
-
-// Fragment highp is optional in GLES2. Using it unguarded is a compile error,
-// not a downgrade, on drivers that do not provide it — and a failed compile
-// used to take the whole process down. Grain is the one thing that needs the
-// extra mantissa, so only it asks.
-#ifdef GL_FRAGMENT_PRECISION_HIGH
-  #define GRAIN_PRECISION highp
-#else
-  #define GRAIN_PRECISION mediump
-#endif
+precision $precisionQualifier float;
 
 varying mediump vec2 vTexCoord;
 
@@ -70,9 +71,10 @@ uniform float uSoftness;
 const vec3 LUMA = vec3($LUMA_R, $LUMA_G, $LUMA_B);
 
 // Grain needs more than the 10 mantissa bits mediump guarantees, or the hash
-// quantises into visible 2-pixel blocks at viewfinder resolutions.
-GRAIN_PRECISION float hash12(GRAIN_PRECISION vec2 p) {
-    GRAIN_PRECISION vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    // quantises into visible 2-pixel blocks at viewfinder resolutions, so it
+    // relies on whatever default precision was probed for this driver.
+    float hash12(vec2 p) {
+        vec3 p3 = fract(vec3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
     return fract((p3.x + p3.y) * p3.z);
 }
@@ -168,8 +170,7 @@ void main() {
     //        has to stay one grain per output pixel or it aliases into moire
     //        once the surface is scaled down below the camera resolution.
     if (uGrain > 0.001) {
-        GRAIN_PRECISION vec2 gp =
-            GRAIN_PRECISION vec2(gl_FragCoord.xy) + vec2(uTime * 61.7, uTime * 37.3);
+        vec2 gp = vec2(gl_FragCoord.xy) + vec2(uTime * 61.7, uTime * 37.3);
         float g = hash12(gp);
         float midWeight = max(1.0 - abs(l - 0.5) * 1.7, 0.2);
         color += (g - 0.5) * uGrain * 0.42 * midWeight;
