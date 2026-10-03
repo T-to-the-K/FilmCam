@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Bundle
+import android.view.Surface
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -41,8 +42,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.tk.filmcam.camera.FilmCameraController
 import com.tk.filmcam.film.FilmCamera
+import com.tk.filmcam.gl.FilmGlPreview
 import com.tk.filmcam.ui.FilmPicker
 import com.tk.filmcam.ui.FlipButton
 import com.tk.filmcam.ui.IconPill
@@ -92,6 +96,7 @@ private fun FilmCamScreen(
     var selectedFilm by remember { mutableStateOf(FilmCamera.DEFAULT) }
     var status by remember { mutableStateOf("") }
     var previewKey by remember { mutableStateOf(0) }
+    var glFailed by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(1f) }
     var canZoomOut by remember { mutableStateOf(false) }
@@ -101,6 +106,14 @@ private fun FilmCamScreen(
 
     val controller = remember {
         FilmCameraController(context, lifecycleOwner)
+    }
+
+    val previewHolder = remember { mutableStateOf<FilmGlPreview?>(null) }
+
+    // The look has to reach the GL surface as well as the saved photo, so the
+    // viewfinder shows the filter while it is selected.
+    LaunchedEffect(selectedFilm) {
+        previewHolder.value?.film = selectedFilm
     }
 
     DisposableEffect(controller) {
@@ -132,14 +145,44 @@ private fun FilmCamScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        if (permissionGranted) {
+        if (permissionGranted && !glFailed) {
+            key(previewKey) {
+                AndroidView(
+                    factory = { ctx ->
+                        FilmGlPreview(ctx) { reason ->
+                            glFailed = true
+                            status = "Preview fallback: $reason"
+                        }.also { preview ->
+                            previewHolder.value = preview
+                            preview.film = selectedFilm
+                            controller.displayRotationProvider = { preview.display?.rotation ?: Surface.ROTATION_0 }
+                            controller.onLensChanged = { info -> preview.lens = info }
+                            controller.attachGestures(preview)
+                            controller.bindPreview(preview) { error ->
+                                if (error.isNotEmpty()) status = error
+                            }
+                        }
+                    },
+                    onRelease = { preview ->
+                        controller.onLensChanged = null
+                        controller.displayRotationProvider = null
+                        preview.release()
+                        previewHolder.value = null
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        } else if (permissionGranted) {
+            // GL preview unavailable: keep the camera working, just ungraded
             key(previewKey) {
                 AndroidView(
                     factory = { ctx ->
                         PreviewView(ctx).apply {
                             scaleType = PreviewView.ScaleType.FILL_CENTER
                             implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            controller.bindPreview(this) { error ->
+                            controller.displayRotationProvider = { display?.rotation ?: Surface.ROTATION_0 }
+                            controller.attachGestures(this)
+                            controller.bindPreview(surfaceProvider) { error ->
                                 if (error.isNotEmpty()) status = error
                             }
                         }

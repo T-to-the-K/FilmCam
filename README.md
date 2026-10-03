@@ -10,15 +10,13 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.4.0. It shoots real photos through CameraX and the selected film look is applied to the saved photo.
-
-**Known limitation, still true:** the live preview is the raw camera feed. The film grade lands on the saved photo, not in the viewfinder — so what you see while shooting is plainer than what ends up in your gallery. Wiring the GLES look into the preview surface is the next piece of work; the shader is already written (`gl/FilmShader.kt`) and ready to drive the preview.
+This is v0.5.0. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
 
 ## Controls
 
 | Gesture / control | What it does |
 |---|---|
-| Tap a film in the strip | Switch the look applied on save |
+| Tap a film in the strip | Re-grade the viewfinder immediately |
 | Pinch the viewfinder | Zoom, following the device's own zoom range |
 | `−` / `+` | Step the zoom; the pill between them shows the current ratio |
 | `⚡` | Flash on stills |
@@ -45,21 +43,28 @@ the right edge is where the thumb already is.
 
 ## How the look is built
 
-Order matters, and it follows the same principle film emulation uses: **tonality before effects**. Applying grain before tone mapping gets it crushed by the contrast curve and it stops reading as grain.
+Order matters. **Tone map before you push colour.** The previous version boosted
+saturation first and applied a linear contrast curve afterwards, which clips
+whichever channel sits furthest from luma — measured, that drove 22% of pixels
+out of range on average and turned bright scenes into solid white. The current
+order is gains → soft S-curve → saturation → split toning → fade, then the
+optical passes.
 
 1. **Optical softness** — 5-tap blur, for sensor bloom
 2. **Halation** — bright areas bleed into neighbours (the CCD/compact signature)
-3. **Tonality** — contrast around a mid pivot, then lifted blacks for the faded look
-4. **Colour** — saturation, per-channel gain, warmth shift
-5. **Grain** — luminance-weighted noise, strongest in midtones like real film
-6. **Vignette** — radial falloff
+3. **Tone curve** — a soft S-curve that fixes 0 and 1 exactly, so it cannot clip; then saturation with a highlight roll-off so vivid hues desaturate toward white instead of posterising; then split toning (shadows and highlights get their own colour); then lifted blacks for the faded look
+4. **Grain** — luminance-weighted noise, strongest in midtones like real film
+5. **Vignette** — radial falloff
 
 Each look is a parameter set in `film/FilmCamera.kt`, not a hardcoded branch. Adding a look means adding a data row.
 
 Two implementations, one look:
 
 - `gl/FilmShader.kt` — GLSL fragment shader for the real-time preview
-- `pipeline/FilmStillProcessor.kt` — CPU path for the saved photo: tonality and colour via `ColorMatrix`, then highlight-extract bloom, quarter-resolution grain weighted to the midtones, then vignette
+- `pipeline/FilmStillProcessor.kt` — CPU path for the saved photo: the same per-pixel grade, then highlight-extract bloom, quarter-resolution grain weighted to the midtones, then vignette
+
+The two implementations are kept in step deliberately; change one and change the
+other, or the photo stops matching the preview.
 
 ## Privacy
 
@@ -109,6 +114,8 @@ app/src/main/java/com/tk/filmcam/
 
 - [x] Zoom (pinch + buttons, ratio readout), flash, torch, working lens flip
 - [x] Look strength retuned so every film is visibly distinct (measured, not guessed)
+- [x] Film grade applied to the live viewfinder, not only on save
+- [x] Looks rebuilt as aesthetic colour grades: no clipping, split-toned, pastel-to-vivid
 - [x] Orientation-aware layout, portrait lock removed
 - [ ] Wire the GLES look into the live preview
 - [ ] Preview thumbnails per film look

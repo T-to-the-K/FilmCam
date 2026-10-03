@@ -12,17 +12,20 @@ import android.provider.MediaStore
 import android.view.OrientationEventListener
 import android.view.ScaleGestureDetector
 import android.view.Surface
+import android.view.View
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import android.hardware.camera2.CameraCharacteristics
 import androidx.camera.core.Preview
 import androidx.camera.core.ZoomState
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.tk.filmcam.film.FilmCamera
+import com.tk.filmcam.gl.FilmLookRenderer
 import com.tk.filmcam.pipeline.FilmStillProcessor
 import java.io.File
 import java.util.concurrent.Executor
@@ -51,7 +54,16 @@ class FilmCameraController(
     private var camera: Camera? = null
     private var imageCapture: ImageCapture? = null
     private var preview: Preview? = null
-    private var previewView: PreviewView? = null
+
+    /** Where the camera draws: the graded GL surface, or a plain PreviewView fallback. */
+    private var previewProvider: Preview.SurfaceProvider? = null
+
+    /** Notified whenever the viewfinder's rotation or mirroring must change. */
+    var onLensChanged: ((FilmLookRenderer.LensInfo) -> Unit)? = null
+
+    /** The display the camera preview is drawn into, for rotation queries. */
+    var displayRotationProvider: (() -> Int)? = null
+    private var sensorOrientation = 90
 
     private var orientationListener: OrientationEventListener? = null
     private var displayListener: DisplayManager.DisplayListener? = null
@@ -86,11 +98,10 @@ class FilmCameraController(
     }
 
     fun bindPreview(
-        view: PreviewView,
+        provider: Preview.SurfaceProvider,
         onError: (String) -> Unit
     ) {
-        previewView = view
-        attachGestures(view)
+        previewProvider = provider
 
         val future = ProcessCameraProvider.getInstance(context)
         future.addListener({
@@ -108,12 +119,12 @@ class FilmCameraController(
         val provider = cameraProvider ?: return
         val rotation = currentRotation()
 
-        // NOTE: deliberately no setTargetRotation on Preview. PreviewView
-        // tracks the display rotation itself and only stands down when a target
-        // rotation is set explicitly — setting it here handed the job to our
-        // OrientationEventListener, which does not fire on a 180-degree flip.
+        // Deliberately no setTargetRotation on Preview. The camera buffer stays
+        // in sensor orientation and FilmGlPreview rotates it in the shader, so
+        // the 180-degree flip that OrientationEventListener misses is handled
+        // by the display listener like every other rotation.
         val newPreview = Preview.Builder().build().apply {
-            previewView?.let { surfaceProvider = it.surfaceProvider }
+            previewProvider?.let { setSurfaceProvider(it) }
         }
 
         val newCapture = ImageCapture.Builder()
@@ -142,6 +153,20 @@ class FilmCameraController(
         preview = newPreview
         imageCapture = newCapture
         camera = bound
+
+        sensorOrientation = runCatching {
+            val chars = Camera2CameraInfo.from(bound.cameraInfo).getCameraCharacteristic(
+                CameraCharacteristics.SENSOR_ORIENTATION
+            ) ?: 90
+            if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                // CameraX already hands back the flipped value on some devices;
+                // normalise so the shader's own mirroring stays predictable.
+                (360 - chars) % 360
+            } else {
+                chars
+            }
+        }.getOrDefault(90)
+        publishLens()
         zoomRatio = bound.cameraInfo.zoomState.value?.zoomRatio ?: 1f
         minZoomRatio = bound.cameraInfo.zoomState.value?.minZoomRatio ?: 1f
         maxZoomRatio = bound.cameraInfo.zoomState.value?.maxZoomRatio ?: 1f
@@ -156,7 +181,17 @@ class FilmCameraController(
     }
 
     private fun currentRotation(): Int =
-        previewView?.display?.rotation ?: Surface.ROTATION_0
+        displayRotationProvider?.invoke() ?: Surface.ROTATION_0
+
+    private fun publishLens() {
+        onLensChanged?.invoke(
+            FilmLookRenderer.LensInfo(
+                sensorOrientation = sensorOrientation,
+                displayRotation = currentRotation(),
+                mirror = lensFacing == CameraSelector.LENS_FACING_FRONT
+            )
+        )
+    }
 
     private fun startOrientationListener() {
         orientationListener?.disable()
@@ -171,8 +206,8 @@ class FilmCameraController(
                 }
                 if (rotation != targetRotation) {
                     targetRotation = rotation
-                    // Only ImageCapture: PreviewView owns the preview rotation.
                     imageCapture?.targetRotation = rotation
+                    publishLens()
                 }
             }
         }
@@ -191,6 +226,7 @@ class FilmCameraController(
                 if (r != targetRotation) {
                     targetRotation = r
                     imageCapture?.targetRotation = r
+                    publishLens()
                 }
             }
         }
@@ -199,7 +235,7 @@ class FilmCameraController(
         this.displayListener = displayListener
     }
 
-    private fun attachGestures(view: PreviewView) {
+    fun attachGestures(view: View) {
         val detector = ScaleGestureDetector(
             context,
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -222,6 +258,7 @@ class FilmCameraController(
         }
         scaleDetector = detector
     }
+
 
     fun setZoomRatio(ratio: Float) {
         val cam = camera ?: return
@@ -409,7 +446,6 @@ class FilmCameraController(
         }
         displayListener = null
         displayManager = null
-        previewView?.setOnTouchListener(null)
         scaleDetector = null
         cameraProvider?.unbindAll()
         cameraProvider = null

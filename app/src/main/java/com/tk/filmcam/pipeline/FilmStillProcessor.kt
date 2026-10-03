@@ -4,8 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.ColorMatrix
-import android.graphics.ColorMatrixColorFilter
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -23,31 +22,45 @@ import kotlin.random.Random
 /**
  * Applies a film look to a captured still on the CPU.
  *
- * Mirrors the GLES shader in [com.tk.filmcam.gl.FilmShader] so the saved photo
- * matches the intent of the preview. Order is fixed and matters: tonality and
- * colour first, then bloom, then grain, then vignette. Grain applied before the
- * contrast curve gets crushed by it and stops reading as grain.
+ * The per-pixel grade below is a line-for-line twin of [com.tk.filmcam.gl.FilmShader],
+ * so the photo you save is the look you framed on the viewfinder. If you change
+ * the maths in one, change it in the other.
+ *
+ * Why this is not a `ColorMatrixColorFilter`: a ColorMatrix is one linear 4x5
+ * transform, which cannot express a tone curve, split toning, or a
+ * highlight-aware saturation roll-off. Forcing all three into a single linear
+ * matrix is what clipped every look to pure white and pure black.
+ *
+ * Order: gains -> tone curve -> saturation -> split tone -> fade, then the
+ * spatial passes (halation, grain, vignette).
  */
 object FilmStillProcessor {
 
     private const val BLOOM_DOWNSCALE = 6
-    private const val BLOOM_PASSES = 5
     private const val GRAIN_DOWNSCALE = 4
 
+    /** Rec.709 luma weights, matching GLSL_LUMA below. */
+    private const val LUMA_R = 0.2126f
+    private const val LUMA_G = 0.7152f
+    private const val LUMA_B = 0.0722f
+
     fun apply(source: Bitmap, film: FilmCamera): Bitmap {
-        // The caller owns `source`; we only recycle our own intermediates.
         val width = source.width
         val height = source.height
         val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(output)
 
-        // 1. tonality + colour in one pass. The filter must be applied while
-        //    drawing *source*; drawing the destination onto its own canvas is a
-        //    no-op and was why every look came out ungraded.
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
-        paint.colorFilter = ColorMatrixColorFilter(buildColorMatrix(film))
-        canvas.drawBitmap(source, 0f, 0f, paint)
-        paint.colorFilter = null
+        // 1. per-pixel grade. Row-at-a-time keeps this off the JNI boundary and
+        //    off per-pixel boxing; a 12 MP frame is a few hundred ms on a
+        //    background thread.
+        val row = IntArray(width)
+        val graded = IntArray(width)
+        for (y in 0 until height) {
+            source.getPixels(row, 0, width, 0, y, width, 1)
+            gradeRow(row, graded, film)
+            output.setPixels(graded, 0, width, 0, y, width, 1)
+        }
+
+        val canvas = Canvas(output)
 
         // 2. halation: extract highlights, blur them, screen them back over.
         if (film.halation > 0.001f) {
@@ -75,80 +88,90 @@ object FilmStillProcessor {
     }
 
     /**
-     * A ColorMatrix is 4 rows of 5 columns and the float array must be exactly
-     * 20 long. Writing it as four columns silently throws
-     * `ArrayIndexOutOfBoundsException: src.length=16 ... dst.length=20` the first
-     * time it is concatenated, which is what stopped every photo from ever being
-     * saved. [matrix] is the only place a ColorMatrix is built from literals.
+     * The grade. Kept deliberately arithmetic and branch-light so it ports to
+     * GLSL one-to-one.
      */
-    private fun matrix(
-        rr: FloatArray, rg: FloatArray, rb: FloatArray,
-        tr: Float, tg: Float, tb: Float
-    ): ColorMatrix {
-        val values = floatArrayOf(
-            rr[0], rr[1], rr[2], 0f, tr,
-            rg[0], rg[1], rg[2], 0f, tg,
-            rb[0], rb[1], rb[2], 0f, tb,
-            0f, 0f, 0f, 0f, 1f
-        )
-        check(values.size == 20) { "ColorMatrix needs 20 values, got ${values.size}" }
-        return ColorMatrix(values)
-    }
-
-    private fun buildColorMatrix(film: FilmCamera): ColorMatrix {
-        val m = ColorMatrix()
-
-        m.setSaturation(film.saturation)
-
-        // per-channel gain
-        m.postConcat(
-            matrix(
-                floatArrayOf(film.rgbGain[0], 0f, 0f),
-                floatArrayOf(0f, film.rgbGain[1], 0f),
-                floatArrayOf(0f, 0f, film.rgbGain[2]),
-                0f, 0f, 0f
-            )
-        )
-
-        // warmth: lift red, pull blue (or the reverse when warmth is negative)
+    private fun gradeRow(src: IntArray, dst: IntArray, film: FilmCamera) {
+        val gain = film.rgbGain
+        val sat = film.saturation
+        val k = film.contrast.coerceIn(0f, 1f)
         val warmth = film.warmth * 0.10f
-        m.postConcat(
-            matrix(
-                floatArrayOf(1f, 0f, 0f),
-                floatArrayOf(0f, 1f, 0f),
-                floatArrayOf(0f, 0f, 1f),
-                warmth, -warmth, 0f
-            )
-        )
+        val shadow = film.shadowTint
+        val highlight = film.highlightTint
+        val split = film.split
+        val fade = film.fade
 
-        // contrast around a 0.5 pivot
-        val c = film.contrast
-        val offset = 0.5f - 0.5f * c
-        m.postConcat(
-            matrix(
-                floatArrayOf(c, 0f, 0f),
-                floatArrayOf(0f, c, 0f),
-                floatArrayOf(0f, 0f, c),
-                offset, offset, offset
-            )
-        )
+        for (i in src.indices) {
+            val p = src[i]
 
-        // fade lifts the blacks without touching the highlights:
-        // out' = out*(1-fade) + fade, per channel
-        val f = film.fade.coerceIn(0f, 0.6f)
-        if (f > 0.001f) {
-            m.postConcat(
-                matrix(
-                    floatArrayOf(1f - f, 0f, 0f),
-                    floatArrayOf(0f, 1f - f, 0f),
-                    floatArrayOf(0f, 0f, 1f - f),
-                    f, f, f
-                )
-            )
+            // gains and warmth
+            var r = (Color.red(p) / 255f) * gain[0] + warmth
+            var g = (Color.green(p) / 255f) * gain[1]
+            var b = (Color.blue(p) / 255f) * gain[2] - warmth
+
+            // soft S-curve. Fixes 0 and 1 exactly, so this cannot clip.
+            r = sCurve(r, k)
+            g = sCurve(g, k)
+            b = sCurve(b, k)
+
+            // saturation after tone mapping, rolled off in the highlights so a
+            // vivid hue desaturates toward white instead of posterising
+            var l = LUMA_R * r + LUMA_G * g + LUMA_B * b
+            r = l + (r - l) * sat
+            g = l + (g - l) * sat
+            b = l + (b - l) * sat
+            val peak = max(r, max(g, b))
+            if (peak > 0.72f) {
+                val t = smoothstep(((peak - 0.72f) / 0.28f).coerceIn(0f, 1f)) * 0.45f
+                val l2 = LUMA_R * r + LUMA_G * g + LUMA_B * b
+                r += (l2 - r) * t
+                g += (l2 - g) * t
+                b += (l2 - b) * t
+            }
+
+            // split toning
+            l = (LUMA_R * r + LUMA_G * g + LUMA_B * b).coerceIn(0f, 1f)
+            val sw = (1f - l) * (1f - l) * split
+            val hw = l * l * split
+            r += shadow[0] * sw
+            g += shadow[1] * sw
+            b += shadow[2] * sw
+            r += highlight[0] * hw
+            g += highlight[1] * hw
+            b += highlight[2] * hw
+
+            // fade lifts the blacks and greys the toe
+            if (fade > 0.001f) {
+                r = r * (1f - fade) + fade
+                g = g * (1f - fade) + fade
+                b = b * (1f - fade) + fade
+                l = LUMA_R * r + LUMA_G * g + LUMA_B * b
+                r += (l - r) * (fade * 0.35f)
+                g += (l - g) * (fade * 0.35f)
+                b += (l - b) * (fade * 0.35f)
+            }
+
+            val ri = (r.coerceIn(0f, 1f) * 255f).roundToInt()
+            val gi = (g.coerceIn(0f, 1f) * 255f).roundToInt()
+            val bi = (b.coerceIn(0f, 1f) * 255f).roundToInt()
+            dst[i] = (Color.alpha(p) shl 24) or (ri shl 16) or (gi shl 8) or bi
         }
-
-        return m
     }
+
+    /**
+     * Monotone S-curve. Two smoothstep passes blended by strength, so the
+     * endpoints are preserved exactly and the peak slope reaches 2.25. This is
+     * the replacement for `(c - 0.5) * contrast + 0.5`, which had no shoulder
+     * and clipped anything above ~0.8.
+     */
+    private fun sCurve(x: Float, k: Float): Float {
+        val v = x.coerceIn(0f, 1f)
+        val a = v + (smoothstep(v) - v) * k
+        val s = smoothstep(a)
+        return a + (s - a) * k
+    }
+
+    private fun smoothstep(x: Float): Float = x * x * (3f - 2f * x)
 
     /**
      * Highlight-only bloom. Downscaled hard, thresholded to the bright end,
@@ -194,83 +217,57 @@ object FilmStillProcessor {
             0 to spread,
             0 to -spread
         )
+        val tile = BitmapShader(small, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        p.shader = tile
         for ((dx, dy) in offsets) {
-            bc.drawBitmap(
-                small,
-                null,
-                RectF(
-                    dx.toFloat(),
-                    dy.toFloat(),
-                    source.width + dx.toFloat(),
-                    source.height + dy.toFloat()
-                ),
-                p
-            )
+            val m = Matrix()
+            m.postTranslate(dx.toFloat(), dy.toFloat())
+            tile.setLocalMatrix(m)
+            bc.drawPaint(p)
         }
         small.recycle()
         return bloom
     }
 
-    /**
-     * Grain as a quarter-resolution noise tile scaled back up, so the clumping
-     * is 4 px like real emulsion and the whole pass is one draw call instead of
-     * one call per pixel.
-     */
-    private fun drawGrain(canvas: Canvas, graded: Bitmap, strength: Float) {
-        val gw = max(1, graded.width / GRAIN_DOWNSCALE)
-        val gh = max(1, graded.height / GRAIN_DOWNSCALE)
+    private fun drawGrain(canvas: Canvas, source: Bitmap, strength: Float) {
+        val w = source.width
+        val h = source.height
+        val gw = max(1, w / GRAIN_DOWNSCALE)
+        val gh = max(1, h / GRAIN_DOWNSCALE)
 
-        val luma = IntArray(gw * gh)
-        val thumb = Bitmap.createScaledBitmap(graded, gw, gh, true)
-        val thumbPixels = IntArray(gw * gh)
-        thumb.getPixels(thumbPixels, 0, gw, 0, 0, gw, gh)
+        val thumb = Bitmap.createScaledBitmap(source, gw, gh, true)
+        val px = IntArray(gw * gh)
+        thumb.getPixels(px, 0, gw, 0, 0, gw, gh)
+        val rng = Random(1234)
+        val noise = IntArray(gw * gh)
+        for (i in px.indices) {
+            val c = px[i]
+            val lum = (Color.red(c) * 0.299f + Color.green(c) * 0.587f + Color.blue(c) * 0.114f) / 255f
+            val weight = 1f - abs(lum - 0.5f) * 1.7f
+            val n = (rng.nextFloat() + rng.nextFloat() - 1f) * strength * 0.42f * max(weight, 0.2f)
+            val v = (n * 255f).roundToInt().coerceIn(0, 255)
+            val bright = rng.nextBoolean()
+            noise[i] = if (bright) Color.argb(v, 255, 255, 255) else Color.argb(v, 0, 0, 0)
+        }
         thumb.recycle()
 
-        val random = Random(System.nanoTime())
-        val peak = (strength * 165f).roundToInt().coerceIn(4, 200)
-
-        for (i in thumbPixels.indices) {
-            val c = thumbPixels[i]
-            val l = (Color.red(c) * 0.299f + Color.green(c) * 0.587f + Color.blue(c) * 0.114f) / 255f
-            // film grain peaks in the midtones, falls off in both ends
-            val weight = 1f - abs(l - 0.5f) * 1.7f
-            if (weight <= 0.02f) {
-                luma[i] = 0
-                continue
-            }
-            val n = (random.nextFloat() + random.nextFloat() - 1f)
-            val a = (abs(n) * peak * weight).roundToInt().coerceIn(0, 255)
-            if (a <= 1) continue
-            val v = if (n > 0f) 255 else 0
-            luma[i] = Color.argb(a, v, v, v)
-        }
-
-        val tile = Bitmap.createBitmap(gw, gh, Bitmap.Config.ARGB_8888)
-        tile.setPixels(luma, 0, gw, 0, 0, gw, gh)
-
-        val p = Paint(Paint.FILTER_BITMAP_FLAG)
-        p.shader = BitmapShader(tile, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-        canvas.drawRect(
-            0f, 0f, graded.width.toFloat(), graded.height.toFloat(), p
-        )
-        p.shader = null
-        tile.recycle()
+        val tile = Bitmap.createBitmap(noise, gw, gh, Bitmap.Config.ARGB_8888)
+        val scaled = Bitmap.createScaledBitmap(tile, w, h, true)
+        if (scaled !== tile) tile.recycle()
+        canvas.drawBitmap(scaled, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG))
+        scaled.recycle()
     }
 
     private fun drawVignette(canvas: Canvas, width: Int, height: Int, strength: Float) {
-        val centerX = width / 2f
-        val centerY = height / 2f
         val radius = sqrt((width * width + height * height).toDouble()).toFloat() / 2f
-        val alpha = (strength * 170f).roundToInt().coerceIn(0, 210)
-
-        val shader = RadialGradient(
-            centerX, centerY, radius,
-            intArrayOf(Color.TRANSPARENT, Color.argb(alpha, 0, 0, 0)),
-            floatArrayOf(0.58f, 1f),
-            Shader.TileMode.CLAMP
+        val cx = width / 2f
+        val cy = height / 2f
+        val colors = intArrayOf(Color.TRANSPARENT, Color.argb((strength * 210f).roundToInt(), 0, 0, 0))
+        val stops = floatArrayOf(0f, 1f)
+        val gradient = RadialGradient(
+            cx, cy, radius, colors, stops, Shader.TileMode.CLAMP
         )
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.shader = shader
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), paint)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { shader = gradient }
+        canvas.drawRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), paint)
     }
 }
