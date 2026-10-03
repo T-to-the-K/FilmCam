@@ -35,6 +35,7 @@ object FilmStillProcessor {
     private const val GRAIN_DOWNSCALE = 4
 
     fun apply(source: Bitmap, film: FilmCamera): Bitmap {
+        // The caller owns `source`; we only recycle our own intermediates.
         val width = source.width
         val height = source.height
         val output = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
@@ -73,44 +74,62 @@ object FilmStillProcessor {
         return output
     }
 
+    /**
+     * A ColorMatrix is 4 rows of 5 columns and the float array must be exactly
+     * 20 long. Writing it as four columns silently throws
+     * `ArrayIndexOutOfBoundsException: src.length=16 ... dst.length=20` the first
+     * time it is concatenated, which is what stopped every photo from ever being
+     * saved. [matrix] is the only place a ColorMatrix is built from literals.
+     */
+    private fun matrix(
+        rr: FloatArray, rg: FloatArray, rb: FloatArray,
+        tr: Float, tg: Float, tb: Float
+    ): ColorMatrix {
+        val values = floatArrayOf(
+            rr[0], rr[1], rr[2], 0f, tr,
+            rg[0], rg[1], rg[2], 0f, tg,
+            rb[0], rb[1], rb[2], 0f, tb,
+            0f, 0f, 0f, 0f, 1f
+        )
+        check(values.size == 20) { "ColorMatrix needs 20 values, got ${values.size}" }
+        return ColorMatrix(values)
+    }
+
     private fun buildColorMatrix(film: FilmCamera): ColorMatrix {
         val m = ColorMatrix()
 
         m.setSaturation(film.saturation)
 
+        // per-channel gain
         m.postConcat(
-            ColorMatrix(
-                floatArrayOf(
-                    film.rgbGain[0], 0f, 0f, 0f,
-                    0f, film.rgbGain[1], 0f, 0f,
-                    0f, 0f, film.rgbGain[2], 0f,
-                    0f, 0f, 0f, 1f
-                )
+            matrix(
+                floatArrayOf(film.rgbGain[0], 0f, 0f),
+                floatArrayOf(0f, film.rgbGain[1], 0f),
+                floatArrayOf(0f, 0f, film.rgbGain[2]),
+                0f, 0f, 0f
             )
         )
 
+        // warmth: lift red, pull blue (or the reverse when warmth is negative)
         val warmth = film.warmth * 0.10f
         m.postConcat(
-            ColorMatrix(
-                floatArrayOf(
-                    1f, 0f, 0f, 0f,
-                    0f, 1f, 0f, 0f,
-                    0f, 0f, 1f, 0f,
-                    warmth, -warmth, 0f, 1f
-                )
+            matrix(
+                floatArrayOf(1f, 0f, 0f),
+                floatArrayOf(0f, 1f, 0f),
+                floatArrayOf(0f, 0f, 1f),
+                warmth, -warmth, 0f
             )
         )
 
         // contrast around a 0.5 pivot
         val c = film.contrast
+        val offset = 0.5f - 0.5f * c
         m.postConcat(
-            ColorMatrix(
-                floatArrayOf(
-                    c, 0f, 0f, 0f,
-                    0f, c, 0f, 0f,
-                    0f, 0f, c, 0f,
-                    0.5f - 0.5f * c, 0.5f - 0.5f * c, 0.5f - 0.5f * c, 1f
-                )
+            matrix(
+                floatArrayOf(c, 0f, 0f),
+                floatArrayOf(0f, c, 0f),
+                floatArrayOf(0f, 0f, c),
+                offset, offset, offset
             )
         )
 
@@ -119,13 +138,11 @@ object FilmStillProcessor {
         val f = film.fade.coerceIn(0f, 0.6f)
         if (f > 0.001f) {
             m.postConcat(
-                ColorMatrix(
-                    floatArrayOf(
-                        1f - f, 0f, 0f, 0f,
-                        0f, 1f - f, 0f, 0f,
-                        0f, 0f, 1f - f, 0f,
-                        f, f, f, 1f
-                    )
+                matrix(
+                    floatArrayOf(1f - f, 0f, 0f),
+                    floatArrayOf(0f, 1f - f, 0f),
+                    floatArrayOf(0f, 0f, 1f - f),
+                    f, f, f
                 )
             )
         }

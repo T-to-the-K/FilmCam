@@ -24,7 +24,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.tk.filmcam.film.FilmCamera
 import com.tk.filmcam.pipeline.FilmStillProcessor
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
@@ -42,6 +41,11 @@ class FilmCameraController(
     private val lifecycleOwner: LifecycleOwner
 ) {
     private val processingExecutor: Executor = Executors.newSingleThreadExecutor()
+
+    private companion object {
+        /** Longest edge we will grade at. ~12 MP, plenty for a phone photo. */
+        const val MAX_EDGE = 3500
+    }
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
@@ -303,9 +307,10 @@ class FilmCameraController(
                         try {
                             val graded = gradeFile(tempFile, film)
                             val uri = publish(graded, film)
+                            graded.recycle()
                             onResult(uri.toString())
-                        } catch (e: Exception) {
-                            onResult("Save failed: ${e.message}")
+                        } catch (e: Throwable) {
+                            onResult("Save failed: ${describe(e)}")
                         } finally {
                             tempFile.delete()
                         }
@@ -313,15 +318,54 @@ class FilmCameraController(
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    onResult("Capture failed: ${exception.message}")
+                    onResult("Capture failed: ${describe(exception)}")
                 }
             }
         )
     }
 
+    /**
+     * Exception class plus the top few stack frames. A bare `e.message` is how
+     * a malformed ColorMatrix hid behind an opaque arraycopy message for three
+     * builds; the class name and the frame that actually threw are what make a
+     * bug diagnosable from a phone screenshot.
+     */
+    private fun describe(e: Throwable): String {
+        val head = e.javaClass.simpleName
+        val msg = e.message?.takeIf { it.isNotBlank() }
+        val frame = e.stackTrace.firstOrNull { it.className.startsWith("com.tk.filmcam") }
+            ?: e.stackTrace.firstOrNull()
+        val where = frame?.let { " at ${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}" }.orEmpty()
+        return listOfNotNull(head, msg, where.takeIf { it.isNotBlank() })
+            .joinToString(": ")
+    }
+
+    /**
+     * Decode the capture, downsampling if it is enormous. A 108 MP frame is
+     * ~430 MB as ARGB_8888, and the grade holds several full-size buffers at
+     * once, so an uncapped decode is an out-of-memory crash waiting to happen.
+     */
     private fun gradeFile(file: File, film: FilmCamera): Bitmap {
-        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
-            ?: error("Could not decode capture")
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            error("Could not read capture bounds (${file.length()} bytes)")
+        }
+
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= MAX_EDGE &&
+            bounds.outHeight / (sample * 2) >= MAX_EDGE
+        ) {
+            sample *= 2
+        }
+
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath, options)
+            ?: error("Could not decode capture (${file.length()} bytes, sample=$sample)")
+
         return FilmStillProcessor.apply(bitmap, film)
     }
 
@@ -337,12 +381,18 @@ class FilmCameraController(
         val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: error("MediaStore insert failed")
 
-        val stream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 95, stream)
-        val bytes = stream.toByteArray()
-
-        resolver.openOutputStream(uri)?.use { it.write(bytes) }
-            ?: error("Could not open output stream")
+        try {
+            resolver.openOutputStream(uri)?.use { stream ->
+                // compress() reports failure by returning false; it does not throw.
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)) {
+                    error("JPEG encode failed for ${bitmap.width}x${bitmap.height}")
+                }
+            } ?: error("Could not open output stream")
+        } catch (e: Throwable) {
+            // do not leave a zero-byte orphan in the user's gallery
+            runCatching { resolver.delete(uri, null, null) }
+            throw e
+        }
 
         values.clear()
         values.put(MediaStore.Images.Media.IS_PENDING, 0)

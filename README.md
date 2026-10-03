@@ -10,7 +10,7 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.3.0. It shoots real photos through CameraX and the selected film look is applied to the saved photo.
+This is v0.4.0. It shoots real photos through CameraX and the selected film look is applied to the saved photo.
 
 **Known limitation, still true:** the live preview is the raw camera feed. The film grade lands on the saved photo, not in the viewfinder — so what you see while shooting is plainer than what ends up in your gallery. Wiring the GLES look into the preview surface is the next piece of work; the shader is already written (`gl/FilmShader.kt`) and ready to drive the preview.
 
@@ -66,6 +66,8 @@ Two implementations, one look:
 **The app declares no `INTERNET` permission.** It cannot upload anything, because it is not permitted to open a network connection.
 
 - Photos are written to `DCIM/FilmCam` via MediaStore, so they appear in your normal gallery
+- Captures are downsampled to a 3500 px longest edge before grading, so a 108 MP
+  frame cannot exhaust memory mid-save
 - No analytics SDK, no crash reporter, no telemetry
 - No third-party services of any kind
 - The temporary full-resolution capture is deleted immediately after grading
