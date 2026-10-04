@@ -308,15 +308,21 @@ private fun FilmCamScreen(
                 }
             }
         } else {
+            // No Arrangement.SpaceBetween here. The status line is conditional, so
+            // SpaceBetween had either two children (status at the top, cluster at
+            // the bottom) or one (cluster anchored to the top, 1800px of bare
+            // preview below the shutter). The weight spacer pins the cluster to
+            // the bottom whether or not there is a message to show.
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .systemBarsPadding(),
-                verticalArrangement = Arrangement.SpaceBetween
+                    .systemBarsPadding()
             ) {
                 if (status.isNotEmpty()) {
                     StatusBar(message = status)
                 }
+
+                Spacer(Modifier.weight(1f))
 
                 Column(modifier = Modifier.fillMaxWidth()) {
                     FilmPicker(

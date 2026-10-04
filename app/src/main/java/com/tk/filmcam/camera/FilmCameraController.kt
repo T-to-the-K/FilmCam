@@ -26,6 +26,7 @@ import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
+import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.LifecycleOwner
 import com.tk.filmcam.film.FilmCamera
 import com.tk.filmcam.gl.FilmLookRenderer
@@ -55,6 +56,37 @@ class FilmCameraController(
         /** Viewfinder buffer. The GL preview shades every one of these pixels. */
         const val PREVIEW_WIDTH = 1280
         const val PREVIEW_HEIGHT = 720
+
+        /**
+         * EXIF worth carrying from the capture into the graded file.
+         *
+         * `Bitmap.compress` writes a bare JFIF with no EXIF at all, so grading a
+         * capture and re-encoding it throws away everything the camera recorded —
+         * including `Orientation`, which is why landscape sensor pixels opened
+         * sideways in the gallery. Orientation is copied rather than recomputed:
+         * CameraX derived it from the target rotation and the sensor orientation
+         * correctly, and re-deriving it here would be a second opinion that can
+         * disagree with the pixels actually in the buffer.
+         *
+         * Sensitivity is carried as ISO only. Writing a recommended exposure
+         * index without `TAG_SENSITIVITY_TYPE` set to ISO makes some parsers
+         * reject the whole EXIF block.
+         */
+        val EXIF_TAGS = arrayOf(
+            ExifInterface.TAG_ORIENTATION,
+            ExifInterface.TAG_DATETIME,
+            ExifInterface.TAG_DATETIME_ORIGINAL,
+            ExifInterface.TAG_DATETIME_DIGITIZED,
+            ExifInterface.TAG_MAKE,
+            ExifInterface.TAG_MODEL,
+            ExifInterface.TAG_F_NUMBER,
+            ExifInterface.TAG_EXPOSURE_TIME,
+            ExifInterface.TAG_ISO_SPEED_RATINGS,
+            ExifInterface.TAG_FOCAL_LENGTH,
+            ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM,
+            ExifInterface.TAG_WHITE_BALANCE,
+            ExifInterface.TAG_EXIF_VERSION
+        )
     }
 
     private var cameraProvider: ProcessCameraProvider? = null
@@ -366,15 +398,22 @@ class FilmCameraController(
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
                     processingExecutor.execute {
+                        val staged = File(context.cacheDir, "graded_${System.currentTimeMillis()}.jpg")
+                        var graded: Bitmap? = null
                         try {
-                            val graded = gradeFile(tempFile, film)
-                            val uri = publish(graded, film)
+                            graded = gradeFile(tempFile, film)
+                            writeJpeg(graded, staged)
                             graded.recycle()
+                            graded = null
+                            carryExif(tempFile, staged)
+                            val uri = publish(staged, film)
                             onResult(uri.toString())
                         } catch (e: Throwable) {
                             onResult("Save failed: ${describe(e)}")
                         } finally {
+                            graded?.recycle()
                             tempFile.delete()
+                            staged.delete()
                         }
                     }
                 }
@@ -429,7 +468,43 @@ class FilmCameraController(
         return FilmStillProcessor.apply(bitmap, film)
     }
 
-    private fun publish(bitmap: Bitmap, film: FilmCamera): Uri {
+    /**
+     * Encode the graded bitmap. compress() reports failure by returning false; it
+     * does not throw, and an unchecked failure writes a 0-byte file.
+     */
+    private fun writeJpeg(bitmap: Bitmap, destination: File) {
+        destination.outputStream().use { stream ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)) {
+                error("JPEG encode failed for ${bitmap.width}x${bitmap.height}")
+            }
+        }
+    }
+
+    /**
+     * Copy the capture's EXIF onto the graded file. Best effort by design: losing
+     * the orientation tag is bad, but failing a save the user already took is
+     * worse, so every step is swallowed and the photo still goes to the gallery.
+     */
+    private fun carryExif(from: File, to: File) {
+        runCatching {
+            val target = ExifInterface(to.absolutePath)
+            val source = runCatching { ExifInterface(from.absolutePath) }.getOrNull()
+
+            if (source != null) {
+                for (tag in EXIF_TAGS) {
+                    val value = runCatching { source.getAttribute(tag) }.getOrNull()
+                    if (!value.isNullOrBlank()) {
+                        runCatching { target.setAttribute(tag, value) }
+                    }
+                }
+            }
+
+            target.setAttribute(ExifInterface.TAG_SOFTWARE, "FilmCam")
+            target.saveAttributes()
+        }
+    }
+
+    private fun publish(source: File, film: FilmCamera): Uri {
         val resolver = context.contentResolver
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, "FILMCAM_${film.id}_${System.currentTimeMillis()}.jpg")
@@ -443,10 +518,7 @@ class FilmCameraController(
 
         try {
             resolver.openOutputStream(uri)?.use { stream ->
-                // compress() reports failure by returning false; it does not throw.
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, 92, stream)) {
-                    error("JPEG encode failed for ${bitmap.width}x${bitmap.height}")
-                }
+                source.inputStream().use { input -> input.copyTo(stream) }
             } ?: error("Could not open output stream")
         } catch (e: Throwable) {
             // do not leave a zero-byte orphan in the user's gallery
