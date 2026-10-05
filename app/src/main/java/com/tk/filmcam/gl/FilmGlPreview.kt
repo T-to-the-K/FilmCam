@@ -131,6 +131,19 @@ class FilmGlPreview(
         }
         pendingRequest = request
         renderer.requestCameraTexture(request.resolution.width, request.resolution.height)
+
+        // CameraX works out how this buffer must be turned and whether it must
+        // be mirrored, per sensor and per lens facing, and reports it here. This
+        // was never read, so the shader had to derive the rotation itself and
+        // got it mirrored. The listener fires again on every rotation change,
+        // so this is also how the viewfinder follows the device turning.
+        request.setTransformationInfoListener(mainExecutor) { info ->
+            val rotation = info.rotationDegrees
+            val mirror = info.isMirroring
+            renderer.orientation = FilmLookRenderer.Orientation(rotation, mirror)
+            requestRender()
+        }
+
         // the renderer builds the SurfaceTexture on the next GL frame and calls
         // back through onSurfaceTextureReady
         requestRender()
@@ -184,6 +197,7 @@ class FilmGlPreview(
 
     fun release() {
         released = true
+        pendingRequest?.clearTransformationInfoListener()
         pendingRequest?.willNotProvideSurface()
         pendingRequest = null
         currentSurface?.release()

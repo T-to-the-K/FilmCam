@@ -190,39 +190,97 @@ void main() {
 """
 
     /**
+     * The clockwise rotation CameraX reports for a buffer, for the cases where
+     * there is no `TransformationInfo` to read yet.
+     *
+     * Only a fallback: [transform] is driven by
+     * [androidx.camera.core.SurfaceRequest.TransformationInfo.getRotationDegrees]
+     * once the first `SurfaceRequest` has reported one.
+     */
+    fun rotationDegrees(sensorOrientation: Int, displayRotation: Int, mirror: Boolean): Int =
+        if (mirror) {
+            (sensorOrientation + displayRotationDegrees(displayRotation)) % 360
+        } else {
+            (sensorOrientation - displayRotationDegrees(displayRotation) + 360) % 360
+        }
+
+    /**
      * Fold mirror, rotation and centre-crop into a single 3x3 UV transform.
      *
      * Column-major, to match `glUniformMatrix3fv(..., transpose = false)` with
      * the values laid out as GLSL's `mat3(c0, c1, c2)`.
      *
-     * @param sensorOrientation clockwise degrees the buffer needs to be rotated
-     *        to be upright, from `CameraCharacteristics.SENSOR_ORIENTATION`.
-     * @param displayRotation `Surface.ROTATION_0/90/180/270` of the view.
+     * @param rotationDegrees clockwise degrees the buffer needs turning to be
+     *        upright. Taken from
+     *        [androidx.camera.core.SurfaceRequest.TransformationInfo.getRotationDegrees],
+     *        which already folds in sensor orientation, display rotation and lens
+     *        facing — deriving it again from the sensor is how it went wrong
+     *        before.
+     * @param mirror horizontal flip, from `TransformationInfo.isMirroring()`.
      * @param bufferWidth camera buffer width in pixels.
      * @param bufferHeight camera buffer height in pixels.
+     * @param frameAspect width over height of the frame as it is drawn on
+     *        screen. The frame's inset border comes from the quad's geometry,
+     *        not from here — see [FilmLookRenderer.frameRect].
      */
     fun transform(
-        sensorOrientation: Int,
-        displayRotation: Int,
+        rotationDegrees: Int,
         mirror: Boolean,
         bufferWidth: Int,
         bufferHeight: Int,
-        viewWidth: Int,
-        viewHeight: Int
+        frameAspect: Float = 0f
     ): FloatArray {
-        val degrees = if (mirror) {
-            (sensorOrientation + displayRotationDegrees(displayRotation)) % 360
-        } else {
-            (sensorOrientation - displayRotationDegrees(displayRotation) + 360) % 360
-        }
+        val degrees = ((rotationDegrees % 360) + 360) % 360
         val rad = Math.toRadians(degrees.toDouble())
         val c = Math.cos(rad).toFloat()
         val s = Math.sin(rad).toFloat()
 
-        // Sampling map for a clockwise content rotation by `degrees`: at 90
-        // degrees output(u,v) reads input(v, 1-u). Transposing this is what
-        // puts the viewfinder on its head.
-        var m = floatArrayOf(c, s, 0f, -s, c, 0f, 0f, 0f, 1f)
+        // A clockwise rotation by `degrees` in the buffer's own top-left
+        // coordinate space is rows [c, s] and [-s, c]; at 90 degrees it reads
+        // (dy, 1 - dx).
+        //
+        // The flip below is what the old version was missing. `aTexCoord` counts
+        // v upwards from the bottom of the screen, but `updateTexImage` hands us
+        // the buffer top row first, so dy = 1 - v. Folding that in makes the
+        // rows [c, -s] and [-s, -c], and 90 degrees becomes input(1 - v, 1 - u).
+        //
+        // Getting this wrong is not a rotation error, it is a reflection:
+        // output(u,v) reads input(v, 1-u) instead of input(1 - v, 1 - u), the
+        // same frame mirrored left to right. That is why it survived a 288-case
+        // check against a reference implementation — the reference had the same
+        // omission — and why every edge-orientation measure looked healthy.
+        // On screen it reads as the viewfinder being inverted.
+        var m = floatArrayOf(c, -s, 0f, -s, -c, 0f, 0f, 0f, 1f)
+
+        // Centre-crop the buffer down to the chosen framing.
+        //
+        // `aTexCoord` is the unit square and `aPosition` is the NDC square, so
+        // this matrix runs screen -> texture and the visible part of the buffer
+        // is its *preimage*: a shrink here shows less of the buffer, not a
+        // smaller image. Scaling the matrix rows is a pre-multiply, which puts
+        // the crop in the output's axes — the buffer's, where uv runs 0..1 about
+        // a centre of 0.5.
+        //
+        // Two things this gets wrong if they are taken carelessly, and both were
+        // wrong before:
+        //
+        // The crop is sized from the buffer's own aspect, not from the rotated
+        // one. After a quarter turn the frame's width runs along the buffer's
+        // height, so scaling by the rotated figure trims the wrong axis.
+        //
+        // There is no translation. The coordinates reaching this point have
+        // already been centred by TRANSLATE_NEG_HALF, so the origin is the centre
+        // of the buffer and a scale alone is centred. Adding the un-centred form
+        // of the shift, (1 - s) / 2, slides the frame sideways by that much —
+        // for a 4:3 frame in portrait, a third of the screen.
+        if (frameAspect > 0f) {
+            val crop = cropFactors(bufferWidth, bufferHeight, degrees, frameAspect)
+            m = floatArrayOf(
+                m[0] * crop[0], m[1] * crop[0], m[2] * crop[0],
+                m[3] * crop[1], m[4] * crop[1], m[5] * crop[1],
+                m[6], m[7], m[8]
+            )
+        }
 
         // Rotate about the centre of the displayed image, then mirror. The order
         // matters: a reflection about u = 1-u does not commute with the shift
@@ -231,30 +289,32 @@ void main() {
         m = multiply(TRANSLATE_HALF, multiply(m, TRANSLATE_NEG_HALF))
         if (mirror) m = multiply(m, MIRROR_X)
 
-        // centre-crop the rotated buffer down to the view's aspect
-        val swaps = sensorOrientation % 180 != 0
-        val rotatedWidth = if (swaps) bufferHeight else bufferWidth
-        val rotatedHeight = if (swaps) bufferWidth else bufferHeight
-        val imageAspect = rotatedWidth.toFloat() / maxOf(1, rotatedHeight)
-        val viewAspect = viewWidth.toFloat() / maxOf(1, viewHeight)
-        val cropX: Float
-        val cropY: Float
-        if (imageAspect > viewAspect) {
-            cropX = viewAspect / imageAspect
-            cropY = 1f
-        } else {
-            cropX = 1f
-            cropY = imageAspect / viewAspect
-        }
-        m = floatArrayOf(
-            m[0] * cropX, m[1] * cropX, m[2] * cropX + (1f - cropX) * 0.5f,
-            m[3] * cropY, m[4] * cropY, m[5] * cropY + (1f - cropY) * 0.5f,
-            m[6], m[7], m[8]
-        )
-
         // GLSL mat3 is column-major, so hand back the transpose of the
         // row-major product.
         return floatArrayOf(m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8])
+    }
+
+    /**
+     * The fraction of the buffer's width and height to keep for [frameAspect].
+     *
+     * [frameAspect] is the frame's shape on screen. The kept sub-rectangle is in
+     * buffer axes, so at a quarter turn its aspect is the reciprocal. Whatever
+     * the frame needs, the crop never touches the other axis.
+     */
+    private fun cropFactors(
+        bufferWidth: Int,
+        bufferHeight: Int,
+        degrees: Int,
+        frameAspect: Float
+    ): FloatArray {
+        val swaps = degrees % 180 != 0
+        val bufferAspect = bufferWidth.toFloat() / maxOf(1, bufferHeight)
+        val keepAspect = if (swaps) 1f / frameAspect else frameAspect
+        return if (keepAspect < bufferAspect) {
+            floatArrayOf(keepAspect / bufferAspect, 1f)
+        } else {
+            floatArrayOf(1f, bufferAspect / keepAspect)
+        }
     }
 
     /** Row-major 3x3 multiply: `a * b`. */

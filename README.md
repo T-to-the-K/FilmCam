@@ -10,7 +10,21 @@ No settings panels. No accounts. No ads. No analytics.
 
 ## Status: prototype
 
-This is v0.5.3. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
+This is v0.5.5. It shoots real photos through CameraX, and the selected film look is applied to the live viewfinder *and* to the saved photo — the same grade, in GLSL for the screen and in Kotlin for the file.
+
+v0.5.5 replaces the selectable aspect ratios with a Dazz-style centred frame: the
+whole field of view in a 4:3 box with the interface around it, no crop, no picker.
+Getting there turned up three bugs and one of them was mine. Nothing in the project
+had ever called `glViewport`, so when the surface resized from 1080x2400 to
+576x1280 the frame kept being drawn in the old coordinate space — correct geometry,
+wrong viewport, and no amount of re-reading the geometry code would have found it.
+The rotation was also derived from the sensor orientation instead of CameraX's
+`TransformationInfo`, which mirrored the viewfinder rather than rotating it, and a
+crop translation that should not have been there was sliding the frame sideways by a
+third of the screen.
+
+v0.5.4 fixed the control cluster anchoring to the top of the screen and stopped
+grading a capture from throwing away its EXIF.
 
 v0.5.3 fixes the crash v0.5.2 was still hiding. That release guarded the
 fragment precision with `#ifdef GL_FRAGMENT_PRECISION_HIGH` and a
@@ -146,6 +160,7 @@ app/src/main/java/com/tk/filmcam/
 - [x] Film grade applied to the live viewfinder, not only on save
 - [x] Looks rebuilt as aesthetic colour grades: no clipping, split-toned, pastel-to-vivid
 - [x] Orientation-aware layout, portrait lock removed
+- [x] Aspect-ratio picker replaced by a centred 4:3 frame, whole field of view, no crop
 - [ ] Wire the GLES look into the live preview
 - [ ] Preview thumbnails per film look
 - [ ] Frame counter per film type (24/36 exposures)

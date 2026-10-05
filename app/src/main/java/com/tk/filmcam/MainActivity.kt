@@ -130,10 +130,10 @@ private fun FilmCamScreen(
     }
 
     DisposableEffect(controller) {
-        controller.setOnZoomChanged { ratio ->
-            zoom = ratio
-            canZoomOut = ratio > controller.minZoomRatio + 0.01f
-            canZoomIn = ratio < controller.maxZoomRatio - 0.01f
+        controller.setOnZoomChanged { z ->
+            zoom = z
+            canZoomOut = z > controller.minZoomRatio + 0.01f
+            canZoomIn = z < controller.maxZoomRatio - 0.01f
         }
         onDispose { controller.release() }
     }

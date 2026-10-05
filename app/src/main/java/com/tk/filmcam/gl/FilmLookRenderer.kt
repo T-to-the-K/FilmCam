@@ -3,6 +3,7 @@ package com.tk.filmcam.gl
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLSurfaceView
+import android.util.Log
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
 import android.opengl.GLES20
@@ -18,9 +19,9 @@ import java.nio.FloatBuffer
  * Both live on the GL thread: `updateTexImage` and `release` must not be split
  * across threads, and `release` must happen while the context is still alive.
  *
- * The buffer arrives in sensor orientation with no rotation applied. All of
- * mirror, rotation and centre-crop live in [FilmShader.transform], which is
- * verified against a reference implementation across 288 orientation cases.
+ * The buffer arrives in sensor orientation with no rotation applied. Mirror,
+ * rotation and centre-crop live in [FilmShader.transform], driven by what
+ * CameraX reports for the live [androidx.camera.core.SurfaceRequest].
  */
 class FilmLookRenderer : GLSurfaceView.Renderer {
 
@@ -87,6 +88,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     private var framesInWindow = 0
     private var windowStartNanos = 0L
     private var fatalReported = false
+    private var lastRect: FloatArray? = null
 
     /**
      * Frames drawn per second, sampled on the GL thread over one-second windows.
@@ -106,6 +108,34 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         val mirror: Boolean = false
     )
 
+    /**
+     * Orientation as CameraX itself reports it, from
+     * [androidx.camera.core.SurfaceRequest.TransformationInfo].
+     *
+     * Null until the first `SurfaceRequest` delivers one, which is when
+     * [lens] is still doing the work. Preferring this over [lens] is the whole
+     * point: CameraX already knows how this particular sensor sits in the
+     * device and how the lens facing affects the result, and re-deriving it
+     * from `SENSOR_ORIENTATION` is what got the viewfinder mirrored.
+     */
+    data class Orientation(val rotationDegrees: Int, val mirror: Boolean)
+
+    /** Set on the GL thread; read there too, so it needs no volatile handoff. */
+    @Volatile var orientation: Orientation? = null
+
+    /**
+     * Width over height of the frame, in the orientation the capture is saved
+     * in — the sensor's, so 4:3 on this pipeline.
+     *
+     * Fixed rather than chosen: the use cases are bound 4:3 and
+     * [FilmCameraController.ASPECT_STRATEGY] documents why nothing else is
+     * honestly available. The frame is then *drawn* as a centred inset instead of
+     * being cropped to a requested shape, so the viewfinder shows the same field
+     * of view the saved photo contains. Rotating the frame from sensor
+     * orientation to screen happens once, in [frameAspect].
+     */
+    private val contentAspect = 4f / 3f
+
     override fun onSurfaceCreated(gl: GL10, config: EGLConfig?) {
         try {
             program = buildProgramWithPrecisionFallback()
@@ -117,6 +147,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
             return
         }
         startNanos = System.nanoTime()
+        Log.i(TAG, "surfaceCreated program=$program tex=$externalTexture")
     }
 
     private fun createExternalTexture() {
@@ -148,6 +179,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     }
 
     private fun reportFatal(reason: String) {
+        Log.e(TAG, "FATAL $reason")
         if (fatalReported) return
         fatalReported = true
         program = 0
@@ -157,6 +189,20 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         viewWidth = maxOf(1, width)
         viewHeight = maxOf(1, height)
+        // The viewport has to follow every surface size, including the ones
+        // FilmGlPreview.applyRenderScale imposes after the view is laid out.
+        //
+        // EGL establishes the viewport from the surface dimensions when the
+        // context is first made current, and nothing updates it afterwards --
+        // GLSurfaceView does not do it either. The first surface here is the
+        // view's own 1080x2400; applyRenderScale then shrinks the buffer to
+        // 576x1280, leaving the viewport describing a surface four times the
+        // buffer's area. NDC then maps into that stale space and the frame is
+        // clipped by the real buffer: it kept the right size, sat off-centre,
+        // and ran off the top and right edges. Nothing in the geometry code was
+        // wrong, which is why frameRect tested clean and the screen was not.
+        GLES20.glViewport(0, 0, viewWidth, viewHeight)
+        Log.i(TAG, "surfaceChanged ${width}x$height viewport=${glViewportParams()}")
     }
 
     /** Ask for a camera buffer of this size. Handled on the next GL frame. */
@@ -169,6 +215,10 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10) {
         try {
+            // Re-assert the viewport every frame. A surface resize can land
+            // between onSurfaceChanged and the draw that follows it, and one
+            // stale viewport costs the whole frame.
+            GLES20.glViewport(0, 0, viewWidth, viewHeight)
             maybeCreateSurfaceTexture()
             sampleFps()
 
@@ -211,6 +261,7 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         if (cameraWidth == w && cameraHeight == h && cameraTexture != null) return
         pendingWidth = 0
         pendingHeight = 0
+        Log.i(TAG, "creating SurfaceTexture ${w}x$h")
 
         val previous = cameraTexture
         val created = SurfaceTexture(externalTexture)
@@ -229,16 +280,108 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     }
 
     private fun currentTransform(): FloatArray {
-        val l = lens
+        val w = maxOf(1, cameraWidth)
+        val h = maxOf(1, cameraHeight)
+        // CameraX's answer once it has one, and the sensor-derived fallback only
+        // for the frames drawn before the first SurfaceRequest reports.
+        val o = orientation
+        val degrees = o?.rotationDegrees
+            ?: FilmShader.rotationDegrees(lens.sensorOrientation, lens.displayRotation, lens.mirror)
+        val mirror = o?.mirror ?: lens.mirror
         return FilmShader.transform(
-            l.sensorOrientation,
-            l.displayRotation,
-            l.mirror,
-            maxOf(1, cameraWidth),
-            maxOf(1, cameraHeight),
-            viewWidth,
-            viewHeight
+            degrees, mirror, w, h, frameAspect(degrees)
         )
+    }
+
+    /**
+     * [contentAspect] turned from sensor orientation into screen orientation.
+     *
+     * A 4:3 photo is 4:3 in the file however it is held, so on a portrait screen
+     * the frame it draws is 3:4. The swap belongs here, once, because the quad
+     * and [uTransform] have to agree on it and two independent swaps is how they
+     * would come to disagree.
+     */
+    private fun frameAspect(degrees: Int): Float {
+        // 4:3 in the file however it is held, so on a portrait screen the frame
+        // it draws is 3:4. The swap belongs here, once, because the quad and
+        // [uTransform] have to agree on it and two independent swaps is how they
+        // would come to disagree.
+        return if (degrees % 180 != 0) 1f / contentAspect else contentAspect
+    }
+
+    /**
+     * The frame's NDC rect: a small centred box at the sensor's aspect.
+     *
+     * The film apps all present the viewfinder as a picture rather than a window
+     * — a framed shot sitting in the middle of the screen with the interface
+     * around it, instead of the camera bleeding edge to edge. That is what this
+     * draws, and it is why the frame has to come from the quad: [uTransform] only
+     * changes which part of the buffer is sampled, and every fragment still
+     * samples something, so shrinking the sampled region magnifies the frame back
+     * out to the full surface. There is no texture-space way to leave a gap.
+     *
+     * Nothing outside the quad is drawn, so the surface keeps its clear colour and
+     * the grade never runs over the surround. That matters, because this shader is
+     * the reason the preview size is pinned.
+     *
+     * Sized on the view's long edge so the box is the same visual size whichever
+     * way the phone is held: a fraction of the long edge, capped so the frame
+     * cannot grow past the view on the other axis.
+     */
+    private fun frameRect(frameAspect: Float): FloatArray {
+        if (frameAspect <= 0f || viewWidth <= 0 || viewHeight <= 0) {
+            return floatArrayOf(-1f, -1f, 1f, 1f)
+        }
+        val viewAspect = viewWidth.toFloat() / viewHeight
+
+        // NDC half-extents. The frame keeps its aspect, so whichever axis is
+        // constrained takes the whole allowance and the other is derived from it.
+        val halfWidth: Float
+        val halfHeight: Float
+        if (frameAspect > viewAspect) {
+            // Frame is relatively wider than the view: full width, bars top/bottom.
+            halfWidth = FRAME_FILL
+            halfHeight = (viewAspect / frameAspect) * FRAME_FILL
+        } else {
+            // Frame is relatively taller: full height, bars at the sides.
+            halfHeight = FRAME_FILL
+            halfWidth = (frameAspect / viewAspect) * FRAME_FILL
+        }
+        // Lift the centre so the frame clears the controls along the bottom edge.
+        // Applied to the centre rather than to one edge, so the lift does not
+        // change the frame's size or its aspect -- only where it sits. In NDC y
+        // grows upward, so the centre moves up and both edges follow.
+        val centreY = FRAME_LIFT.coerceAtMost(1f - halfHeight)
+        return floatArrayOf(
+            -halfWidth,
+            centreY - halfHeight,
+            halfWidth,
+            centreY + halfHeight
+        )
+    }
+
+    /**
+     * Rewrite [QUAD] for [rect], if it has moved.
+     *
+     * The buffer is static so the draw path can hand the same one to
+     * `glVertexAttribPointer` every frame, but a ratio change or a rotation moves
+     * the rect, and a stale quad would keep drawing the old frame while the
+     * transform cropped to the new one.
+     */
+    private fun updateQuad(rect: FloatArray) {
+        if (lastRect != null && rect.contentEquals(lastRect!!)) return
+        val left = rect[0]
+        val bottom = rect[1]
+        val right = rect[2]
+        val top = rect[3]
+        // Same vertex order as TEX_COORDS: bottom-left, bottom-right, top-left,
+        // top-right, as a triangle strip.
+        QUAD.put(0, left).put(1, bottom)
+        QUAD.put(2, right).put(3, bottom)
+        QUAD.put(4, left).put(5, top)
+        QUAD.put(6, right).put(7, top)
+        QUAD.position(0)
+        lastRect = rect.copyOf()
     }
 
     private fun draw() {
@@ -290,6 +433,16 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         GLES20.glUniform1f(uHalation, look.halation)
         GLES20.glUniform1f(uSoftness, look.softness)
 
+        // Shrink the quad to the frame before pointing at it, so a ratio change
+        // takes effect on this frame rather than the next one.
+        val orientation = orientation
+        val degrees = orientation?.rotationDegrees
+            ?: FilmShader.rotationDegrees(
+                lens.sensorOrientation, lens.displayRotation, lens.mirror
+            )
+        val rect = frameRect(frameAspect(degrees))
+        updateQuad(rect)
+
         QUAD.position(0)
         GLES20.glEnableVertexAttribArray(aPosition)
         GLES20.glVertexAttribPointer(aPosition, 2, GLES20.GL_FLOAT, false, 0, QUAD)
@@ -304,6 +457,12 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
         GLES20.glDisableVertexAttribArray(aTexCoord)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
         GLES20.glUseProgram(0)
+    }
+
+    private fun glViewportParams(): String {
+        val buf = IntArray(4)
+        GLES20.glGetIntegerv(GLES20.GL_VIEWPORT, buf, 0)
+        return buf.joinToString(",")
     }
 
     fun onSurfaceDestroyed() {
@@ -417,6 +576,35 @@ class FilmLookRenderer : GLSurfaceView.Renderer {
     }
 
     private companion object {
+        const val TAG = "FilmLookRenderer"
+
+        /**
+         * How much of the view's long edge the viewfinder frame occupies, 0..1.
+         *
+         * This is the whole of the old aspect-ratio feature reduced to one
+         * number. The frame is centred and inset by the remainder, so the
+         * viewfinder reads as a picture sitting in the interface rather than a
+         * window onto the camera.
+         *
+         * 0.86 leaves a visible border on every side in both orientations while
+         * keeping the frame large enough to judge focus and exposure from.
+         */
+        const val FRAME_FILL = 0.86f
+
+        /**
+         * How far to raise the frame above centre, as a fraction of the view.
+         *
+         * The filter row, zoom pills and shutter cluster are pinned to the bottom
+         * of the screen, so a frame centred in the full view sits low and crowds
+         * them. Lifting it puts the breathing room at the bottom, where the
+         * controls are, at the cost of more at the top -- which is empty.
+         *
+         * Positive is up, in NDC, so it applies the same way in both orientations
+         * without a sign flip. 0.07 is about 90px on a 2400px-tall view: enough to
+         * read as separate, small enough that the frame stays optically centred.
+         */
+        const val FRAME_LIFT = 0.07f
+
         const val HIGH_PRECISION_PROBE =
             "precision highp float;\nvoid main() { gl_FragColor = vec4(0.0); }\n"
 

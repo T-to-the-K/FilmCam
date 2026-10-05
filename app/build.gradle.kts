@@ -22,8 +22,8 @@ android {
         applicationId = "com.tk.filmcam"
         minSdk = 30
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.5.4"
+        versionCode = 10
+        versionName = "0.5.5"
     }
 
     signingConfigs {
@@ -39,8 +39,13 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // R8 needs roughly 2.5 GB and this box has 7.6 GB with a browser and
+            // a phone mirror already resident, so the shrink step gets OOM-killed
+            // here. `-Pminify=false` builds the same release-signed APK without
+            // it, which is enough to verify behaviour on a device.
+            val minify = (project.findProperty("minify") as String?)?.toBoolean() ?: true
+            isMinifyEnabled = minify
+            isShrinkResources = minify
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")

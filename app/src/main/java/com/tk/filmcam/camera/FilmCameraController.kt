@@ -18,6 +18,7 @@ import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import android.hardware.camera2.CameraCharacteristics
 import androidx.camera.core.Preview
 import androidx.camera.core.ZoomState
@@ -53,9 +54,28 @@ class FilmCameraController(
         /** Longest edge we will grade at. ~12 MP, plenty for a phone photo. */
         const val MAX_EDGE = 3500
 
-        /** Viewfinder buffer. The GL preview shades every one of these pixels. */
-        const val PREVIEW_WIDTH = 1280
-        const val PREVIEW_HEIGHT = 720
+        /**
+         * Viewfinder buffer.
+         *
+         * Pinned rather than left to CameraX because FilmGlPreview shades every
+         * pixel of this buffer through the film grade on the GPU, and letting
+         * the selector pick a 4K viewfinder would cost several times the fill
+         * rate for something nobody prints from. Sized on the short edge.
+         */
+        val PREVIEW_SIZE = Size(960, 720)
+
+        /**
+         * The one aspect strategy both use cases are bound with.
+         *
+         * 4:3 is the sensor's native shape, and it is deliberately the only
+         * one. `AspectRatioStrategy` defines 4:3 and 16:9 and nothing else, its
+         * fallback is AUTO, and there is no 1:1 strategy at all — so asking for
+         * anything else quietly hands back a 4:3 buffer while looking like it
+         * asked. Binding 4:3 and framing it in the viewfinder instead means the
+         * selector can never quietly disagree with what is on screen.
+         */
+        val ASPECT_STRATEGY: AspectRatioStrategy =
+            AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY
 
         /**
          * EXIF worth carrying from the capture into the graded file.
@@ -163,17 +183,24 @@ class FilmCameraController(
         // the 180-degree flip that OrientationEventListener misses is handled
         // by the display listener like every other rotation.
         //
-        // The preview is also pinned to 720p. FilmGlPreview shades every pixel of
-        // this buffer through the film grade on the GPU, and the full-resolution
-        // stream costs several times the fill rate for a viewfinder nobody is
-        // printing from. ImageCapture keeps its own full-resolution setting, so
-        // the saved photo is unaffected.
+        // The preview size is pinned rather than left to CameraX. FilmGlPreview
+        // shades every pixel of this buffer through the film grade on the GPU,
+        // so letting the selector pick a 4K viewfinder would cost several times
+        // the fill rate for something nobody prints from.
+        //
+        // Both use cases are bound with the same 4:3 strategy on purpose.
+        // CameraX crops whichever use case does not match the sensor to fit the
+        // others, so binding a 16:9 preview against a 4:3 capture silently gives
+        // the preview and the photo different fields of view. The viewfinder
+        // draws its frame as a centred inset instead of asking for a shape it
+        // cannot get — see FilmLookRenderer.frameRect.
         val newPreview = Preview.Builder()
             .setResolutionSelector(
                 ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(ASPECT_STRATEGY)
                     .setResolutionStrategy(
                         ResolutionStrategy(
-                            Size(PREVIEW_WIDTH, PREVIEW_HEIGHT),
+                            PREVIEW_SIZE,
                             ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
                         )
                     )
@@ -186,6 +213,13 @@ class FilmCameraController(
 
         val newCapture = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            // Same aspect strategy as the preview, no size pin: the capture
+            // should be as large as the sensor offers.
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(ASPECT_STRATEGY)
+                    .build()
+            )
             .setTargetRotation(rotation)
             .setFlashMode(
                 if (flashEnabled) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
