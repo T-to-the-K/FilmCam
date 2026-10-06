@@ -54,8 +54,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.tk.filmcam.camera.FilmCameraController
 import com.tk.filmcam.film.FilmCamera
 import com.tk.filmcam.gl.FilmGlPreview
-import com.tk.filmcam.ui.FilmPicker
-import com.tk.filmcam.ui.FlipButton
+import com.tk.filmcam.ui.FilterEntryPill
+import com.tk.filmcam.ui.FilterPanel
 import com.tk.filmcam.ui.IconPill
 import com.tk.filmcam.ui.ShutterButton
 import com.tk.filmcam.ui.Spacer8
@@ -103,7 +103,6 @@ private fun FilmCamScreen(
 
     var selectedFilm by remember { mutableStateOf(FilmCamera.DEFAULT) }
     var status by remember { mutableStateOf("") }
-    var previewKey by remember { mutableStateOf(0) }
     var glFailed by remember { mutableStateOf(false) }
     var saving by remember { mutableStateOf(false) }
     var zoom by remember { mutableStateOf(1f) }
@@ -112,6 +111,7 @@ private fun FilmCamScreen(
     var torchOn by remember { mutableStateOf(false) }
     var flashOn by remember { mutableStateOf(false) }
     var fps by remember { mutableStateOf(0) }
+    var showFilters by remember { mutableStateOf(false) }
 
     val controller = remember {
         FilmCameraController(context, lifecycleOwner)
@@ -165,50 +165,46 @@ private fun FilmCamScreen(
             .background(Color.Black)
     ) {
         if (permissionGranted && !glFailed) {
-            key(previewKey) {
-                AndroidView(
-                    factory = { ctx ->
-                        FilmGlPreview(ctx) { reason ->
-                            glFailed = true
-                            status = "Preview fallback: $reason"
-                        }.also { preview ->
-                            previewHolder.value = preview
-                            preview.film = selectedFilm
-                            controller.displayRotationProvider = { preview.display?.rotation ?: Surface.ROTATION_0 }
-                            controller.onLensChanged = { info -> preview.lens = info }
-                            controller.attachGestures(preview)
-                            controller.bindPreview(preview) { error ->
-                                if (error.isNotEmpty()) status = error
-                            }
+            AndroidView(
+                factory = { ctx ->
+                    FilmGlPreview(ctx) { reason ->
+                        glFailed = true
+                        status = "Preview fallback: $reason"
+                    }.also { preview ->
+                        previewHolder.value = preview
+                        preview.film = selectedFilm
+                        controller.displayRotationProvider = { preview.display?.rotation ?: Surface.ROTATION_0 }
+                        controller.onLensChanged = { info -> preview.lens = info }
+                        controller.attachGestures(preview)
+                        controller.bindPreview(preview) { error ->
+                            if (error.isNotEmpty()) status = error
                         }
-                    },
-                    onRelease = { preview ->
-                        controller.onLensChanged = null
-                        controller.displayRotationProvider = null
-                        preview.release()
-                        previewHolder.value = null
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+                    }
+                },
+                onRelease = { preview ->
+                    controller.onLensChanged = null
+                    controller.displayRotationProvider = null
+                    preview.release()
+                    previewHolder.value = null
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         } else if (permissionGranted) {
             // GL preview unavailable: keep the camera working, just ungraded
-            key(previewKey) {
-                AndroidView(
-                    factory = { ctx ->
-                        PreviewView(ctx).apply {
-                            scaleType = PreviewView.ScaleType.FILL_CENTER
-                            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                            controller.displayRotationProvider = { display?.rotation ?: Surface.ROTATION_0 }
-                            controller.attachGestures(this)
-                            controller.bindPreview(surfaceProvider) { error ->
-                                if (error.isNotEmpty()) status = error
-                            }
+            AndroidView(
+                factory = { ctx ->
+                    PreviewView(ctx).apply {
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                        controller.displayRotationProvider = { display?.rotation ?: Surface.ROTATION_0 }
+                        controller.attachGestures(this)
+                        controller.bindPreview(surfaceProvider) { error ->
+                            if (error.isNotEmpty()) status = error
                         }
-                    },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
         } else {
             Box(
                 modifier = Modifier
@@ -216,7 +212,7 @@ private fun FilmCamScreen(
                     .background(Color(0xFF111111)),
                 contentAlignment = Alignment.Center
             ) {
-                Text2(permissionMessage)
+                androidx.compose.material3.Text(text = permissionMessage, color = Color.White)
             }
         }
 
@@ -229,7 +225,7 @@ private fun FilmCamScreen(
                 Box(modifier = Modifier.weight(1f).fillMaxHeight())
                 Column(
                     modifier = Modifier
-                        .width(196.dp)
+                        .width(220.dp)
                         .fillMaxHeight(),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -258,11 +254,7 @@ private fun FilmCamScreen(
 
                     Spacer(Modifier.weight(1f))
 
-                    FilmPicker(
-                        selected = selectedFilm,
-                        onSelect = { selectedFilm = it },
-                        modifier = Modifier.fillMaxWidth()
-                    )
+
 
                     Row(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -307,16 +299,14 @@ private fun FilmCamScreen(
                             }
                         )
                         Spacer(Modifier.width(12.dp))
-                        FlipButton(
-                            onClick = {
-                                controller.flip { }
-                                previewKey++
-                                status = ""
-                            }
-                        )
+
                     }
 
-                    FpsReadout(fps)
+                    androidx.compose.material3.Text(
+                        text = "$fps fps",
+                        color = Color(0xFF8A8A8A),
+                        fontSize = 10.sp
+                    )
                     Spacer(Modifier.height(8.dp))
                 }
             }
@@ -343,7 +333,11 @@ private fun FilmCamScreen(
                         .padding(horizontal = 16.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FpsReadout(fps)
+                    androidx.compose.material3.Text(
+                        text = "$fps fps",
+                        color = Color(0xFF8A8A8A),
+                        fontSize = 10.sp
+                    )
                     Spacer(Modifier.weight(1f))
                     IconPill(
                         icon = if (flashOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
@@ -363,10 +357,7 @@ private fun FilmCamScreen(
                 Spacer(Modifier.weight(1f))
 
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    FilmPicker(
-                        selected = selectedFilm,
-                        onSelect = { selectedFilm = it }
-                    )
+
 
                     Row(
                         modifier = Modifier
@@ -423,31 +414,21 @@ private fun FilmCamScreen(
                             modifier = Modifier.weight(1f),
                             contentAlignment = Alignment.CenterEnd
                         ) {
-                            FlipButton(
-                                onClick = {
-                                    controller.flip { }
-                                    previewKey++
-                                    status = ""
-                                }
+                            FilterEntryPill(
+                                film = selectedFilm,
+                                onClick = { showFilters = true }
                             )
                         }
                     }
                 }
             }
         }
+        if (showFilters) {
+            FilterPanel(
+                selected = selectedFilm,
+                onSelect = { selectedFilm = it },
+                onClose = { showFilters = false }
+            )
+        }
     }
-}
-
-@Composable
-private fun Text2(text: String) {
-    androidx.compose.material3.Text(text = text, color = Color.White)
-}
-
-@Composable
-private fun FpsReadout(fps: Int) {
-    androidx.compose.material3.Text(
-        text = "$fps fps",
-        color = Color(0xFF8A8A8A),
-        fontSize = 10.sp
-    )
 }

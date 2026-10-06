@@ -394,18 +394,7 @@ class FilmCameraController(
         return flashEnabled
     }
 
-    fun flip(onError: (String) -> Unit) {
-        val next = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
-            CameraSelector.LENS_FACING_FRONT
-        } else {
-            CameraSelector.LENS_FACING_BACK
-        }
-        torchEnabled = false
-        zoomRatio = 1f
-        baseZoom = 1f
-        lensFacing = next
-        bind(onError)
-    }
+
 
     /**
      * Capture a photo, grade it with [film], and publish it to the gallery.

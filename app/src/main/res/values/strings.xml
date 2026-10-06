@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">FilmCam</string>
     <string name="cd_shutter">Shutter</string>
-    <string name="cd_flip_camera">Flip camera</string>
+
     <string name="cd_film_picker">Choose a film camera</string>
     <string name="cd_preview">Camera preview</string>
     <string name="cd_film_thumbnail">%1$s preview</string>
@@ -15,6 +15,9 @@
     <string name="cd_zoom_out">Zoom out</string>
     <string name="cd_flash">Flash</string>
     <string name="cd_torch">Torch</string>
+    <string name="filters_title">Filters</string>
+    <string name="cd_close_filters">Close filters</string>
+    <string name="cd_open_filters">Open filters</string>
     <string name="film_ccd">CCD</string>
     <string name="film_135">135</string>
     <string name="film_120">120</string>
