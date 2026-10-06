@@ -21,9 +21,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.FlashOff
+import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.FlashlightOff
+import androidx.compose.material.icons.filled.FlashlightOn
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -223,12 +229,32 @@ private fun FilmCamScreen(
                 Box(modifier = Modifier.weight(1f).fillMaxHeight())
                 Column(
                     modifier = Modifier
-                        .width(132.dp)
+                        .width(196.dp)
                         .fillMaxHeight(),
-                    verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     if (status.isNotEmpty()) StatusBar(message = status, modifier = Modifier.fillMaxWidth())
+
+                    // Top bar of secondary controls, same order as portrait.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        IconPill(
+                            icon = if (flashOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+                            desc = flashDesc,
+                            active = flashOn,
+                            onClick = { flashOn = controller.toggleFlash() }
+                        )
+                        Spacer8()
+                        IconPill(
+                            icon = if (torchOn) Icons.Filled.FlashlightOn else Icons.Filled.FlashlightOff,
+                            desc = torchDesc,
+                            active = torchOn,
+                            onClick = { torchOn = controller.toggleTorch() }
+                        )
+                    }
 
                     Spacer(Modifier.weight(1f))
 
@@ -238,9 +264,12 @@ private fun FilmCamScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         IconPill(
-                            label = "\u2212",
+                            icon = Icons.Filled.Remove,
                             desc = zoomOutDesc,
                             enabled = canZoomOut,
                             onClick = { controller.stepZoom(-1f) }
@@ -249,62 +278,46 @@ private fun FilmCamScreen(
                         ZoomReadout(zoom = zoom)
                         Spacer8()
                         IconPill(
-                            label = "+",
+                            icon = Icons.Filled.Add,
                             desc = zoomInDesc,
                             enabled = canZoomIn,
                             onClick = { controller.stepZoom(1f) }
                         )
-                        Spacer8()
-                        FpsReadout(fps)
                     }
 
-                    Spacer(Modifier.height(10.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconPill(
-                            label = "\u26a1",
-                            desc = flashDesc,
-                            active = flashOn,
-                            onClick = { flashOn = controller.toggleFlash() }
-                        )
-                        Spacer8()
-                        IconPill(
-                            label = "\u2600",
-                            desc = torchDesc,
-                            active = torchOn,
-                            onClick = { torchOn = controller.toggleTorch() }
-                        )
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-
-                    ShutterButton(
-                        enabled = permissionGranted && !saving,
-                        onClick = {
-                            saving = true
-                            status = savingMessage
-                            controller.capture(selectedFilm) { result ->
-                                saving = false
-                                status = if (result.startsWith("http") || result.contains("/")) {
-                                    savedMessage
-                                } else {
-                                    result
+                    // Shutter and flip side by side, flip on the outside.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        ShutterButton(
+                            enabled = permissionGranted && !saving,
+                            onClick = {
+                                saving = true
+                                status = savingMessage
+                                controller.capture(selectedFilm) { result ->
+                                    saving = false
+                                    status = if (result.startsWith("http") || result.contains("/")) {
+                                        savedMessage
+                                    } else {
+                                        result
+                                    }
                                 }
                             }
-                        }
-                    )
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        FlipButton(
+                            onClick = {
+                                controller.flip { }
+                                previewKey++
+                                status = ""
+                            }
+                        )
+                    }
 
-                    Spacer(Modifier.height(14.dp))
-
-                    FlipButton(
-                        onClick = {
-                            controller.flip { }
-                            previewKey++
-                            status = ""
-                        }
-                    )
-
-                    Spacer(Modifier.height(18.dp))
+                    FpsReadout(fps)
+                    Spacer(Modifier.height(8.dp))
                 }
             }
         } else {
@@ -322,6 +335,31 @@ private fun FilmCamScreen(
                     StatusBar(message = status)
                 }
 
+                // Secondary controls go in a top bar, as on every stock camera
+                // app — flash and torch are not shutter-adjacent.
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FpsReadout(fps)
+                    Spacer(Modifier.weight(1f))
+                    IconPill(
+                        icon = if (flashOn) Icons.Filled.FlashOn else Icons.Filled.FlashOff,
+                        desc = flashDesc,
+                        active = flashOn,
+                        onClick = { flashOn = controller.toggleFlash() }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    IconPill(
+                        icon = if (torchOn) Icons.Filled.FlashlightOn else Icons.Filled.FlashlightOff,
+                        desc = torchDesc,
+                        active = torchOn,
+                        onClick = { torchOn = controller.toggleTorch() }
+                    )
+                }
+
                 Spacer(Modifier.weight(1f))
 
                 Column(modifier = Modifier.fillMaxWidth()) {
@@ -333,12 +371,12 @@ private fun FilmCamScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 10.dp),
+                            .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         IconPill(
-                            label = "\u2212",
+                            icon = Icons.Filled.Remove,
                             desc = zoomOutDesc,
                             enabled = canZoomOut,
                             onClick = { controller.stepZoom(-1f) }
@@ -347,51 +385,25 @@ private fun FilmCamScreen(
                         ZoomReadout(zoom = zoom)
                         Spacer8()
                         IconPill(
-                            label = "+",
+                            icon = Icons.Filled.Add,
                             desc = zoomInDesc,
                             enabled = canZoomIn,
                             onClick = { controller.stepZoom(1f) }
                         )
-                        Spacer8()
-                        FpsReadout(fps)
                     }
 
+                    // Three equal-weight slots so the shutter stays dead centre
+                    // regardless of how wide the buttons either side of it get.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(start = 20.dp, end = 20.dp, bottom = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .padding(horizontal = 24.dp, vertical = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconPill(
-                            label = "\u26a1",
-                            desc = flashDesc,
-                            active = flashOn,
-                            onClick = { flashOn = controller.toggleFlash() }
-                        )
-                        Spacer8()
-                        IconPill(
-                            label = "\u2600",
-                            desc = torchDesc,
-                            active = torchOn,
-                            onClick = { torchOn = controller.toggleTorch() }
-                        )
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(start = 28.dp, end = 28.dp, bottom = 20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        FlipButton(
-                            onClick = {
-                                controller.flip { }
-                                previewKey++
-                                status = ""
-                            }
-                        )
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterStart
+                        ) {}
                         ShutterButton(
                             enabled = permissionGranted && !saving,
                             onClick = {
@@ -407,7 +419,18 @@ private fun FilmCamScreen(
                                 }
                             }
                         )
-                        Box(modifier = Modifier.size(44.dp))
+                        Box(
+                            modifier = Modifier.weight(1f),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            FlipButton(
+                                onClick = {
+                                    controller.flip { }
+                                    previewKey++
+                                    status = ""
+                                }
+                            )
+                        }
                     }
                 }
             }

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +19,9 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -88,12 +91,12 @@ private fun FilmChip(
 
     Box(
         modifier = Modifier
-            .height(46.dp)
-            .background(background, RoundedCornerShape(23.dp))
+            .height(48.dp)
+            .background(background, RoundedCornerShape(24.dp))
             .border(
                 width = if (isSelected) 2.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(23.dp)
+                shape = RoundedCornerShape(24.dp)
             )
             .clickable(onClick = onClick)
             .semantics { contentDescription = if (isSelected) selectedDesc else labelDesc }
@@ -107,27 +110,6 @@ private fun FilmChip(
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
         )
     }
-}
-
-/** Small round colour swatch showing each look's signature tint. */
-@Composable
-fun FilmSwatch(film: FilmCamera, modifier: Modifier = Modifier) {
-    val tint = Color(
-        red = film.rgbGain[0].coerceIn(0f, 1.4f) / 1.4f,
-        green = film.rgbGain[1].coerceIn(0f, 1.4f) / 1.4f,
-        blue = film.rgbGain[2].coerceIn(0f, 1.4f) / 1.4f,
-        alpha = 1f
-    )
-    Spacer(
-        modifier = modifier
-            .size(10.dp)
-            .background(tint, CircleShape)
-    )
-}
-
-@Composable
-fun PreviewSurface(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    Box(modifier = modifier.fillMaxSize()) { content() }
 }
 
 @Composable
@@ -151,12 +133,7 @@ fun ShutterButton(
             .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = shutterDesc },
         contentAlignment = Alignment.Center
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-        ) {}
-    }
+    ) {}
 }
 
 @Composable
@@ -164,19 +141,24 @@ fun FlipButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val desc = stringResource(R.string.cd_flip_camera)
     Box(
         modifier = modifier
-            .size(44.dp)
+            .size(48.dp)
             .background(Color.Black.copy(alpha = 0.4f), CircleShape)
             .clickable(onClick = onClick)
             .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center
     ) {
-        Text("⟳", color = Color.White, fontSize = 20.sp)
+        Icon(
+            imageVector = Icons.Filled.Cameraswitch,
+            contentDescription = null,
+            tint = Color.White,
+            modifier = Modifier.size(24.dp)
+        )
     }
 }
 
 @Composable
 fun IconPill(
-    label: String,
+    icon: ImageVector,
     desc: String,
     active: Boolean = false,
     enabled: Boolean = true,
@@ -193,16 +175,21 @@ fun IconPill(
     )
     Box(
         modifier = modifier
-            .height(38.dp)
+            .size(48.dp)
             .background(
                 if (active) Color(0x33FFC24B) else Color.Black.copy(alpha = 0.4f),
-                RoundedCornerShape(19.dp)
+                CircleShape
             )
             .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = desc },
         contentAlignment = Alignment.Center
     ) {
-        Text(label, color = tint, fontSize = 15.sp)
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(22.dp)
+        )
     }
 }
 
@@ -210,9 +197,9 @@ fun IconPill(
 fun ZoomReadout(zoom: Float, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
-            .height(38.dp)
-            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(19.dp))
-            .padding(horizontal = 12.dp),
+            .height(48.dp)
+            .width(64.dp)
+            .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(24.dp)),
         contentAlignment = Alignment.Center
     ) {
         Text(
