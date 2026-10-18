@@ -54,8 +54,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.tk.filmcam.camera.FilmCameraController
 import com.tk.filmcam.film.FilmCamera
 import com.tk.filmcam.gl.FilmGlPreview
+import com.tk.filmcam.ui.FilmCrosshair
 import com.tk.filmcam.ui.FilterEntryPill
 import com.tk.filmcam.ui.FilterPanel
+import com.tk.filmcam.ui.FocusSlider
 import com.tk.filmcam.ui.IconPill
 import com.tk.filmcam.ui.ShutterButton
 import com.tk.filmcam.ui.Spacer8
@@ -112,6 +114,9 @@ private fun FilmCamScreen(
     var flashOn by remember { mutableStateOf(false) }
     var fps by remember { mutableStateOf(0) }
     var showFilters by remember { mutableStateOf(false) }
+    var focusFraction by remember { mutableStateOf(0f) }
+    var manualFocus by remember { mutableStateOf(false) }
+    var canManualFocus by remember { mutableStateOf(false) }
 
     val controller = remember {
         FilmCameraController(context, lifecycleOwner)
@@ -141,7 +146,15 @@ private fun FilmCamScreen(
             canZoomOut = z > controller.minZoomRatio + 0.01f
             canZoomIn = z < controller.maxZoomRatio - 0.01f
         }
-        onDispose { controller.release() }
+        // Tap-to-focus on the viewfinder releases manual focus, and the lens
+        // tells us when that happens so the slider label follows.
+        controller.onManualFocusChanged = { manualFocus = it }
+        controller.onFocusCapability = { canManualFocus = it }
+        onDispose {
+            controller.onManualFocusChanged = null
+            controller.onFocusCapability = null
+            controller.release()
+        }
     }
 
     val savedMessage = stringResource(R.string.saved_to_gallery)
@@ -216,6 +229,13 @@ private fun FilmCamScreen(
             }
         }
 
+        if (permissionGranted) {
+            FilmCrosshair(
+                film = selectedFilm,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
         if (landscape) {
             Row(
                 modifier = Modifier
@@ -255,6 +275,17 @@ private fun FilmCamScreen(
                     Spacer(Modifier.weight(1f))
 
 
+
+                    FocusSlider(
+                        fraction = focusFraction,
+                        manual = manualFocus,
+                        enabled = canManualFocus,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        onChange = {
+                            focusFraction = it
+                            controller.setManualFocus(it)
+                        }
+                    )
 
                     Row(
                         modifier = Modifier.padding(vertical = 8.dp),
@@ -358,6 +389,24 @@ private fun FilmCamScreen(
 
                 Column(modifier = Modifier.fillMaxWidth()) {
 
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FocusSlider(
+                            fraction = focusFraction,
+                            manual = manualFocus,
+                            enabled = canManualFocus,
+                            onChange = {
+                                focusFraction = it
+                                controller.setManualFocus(it)
+                            }
+                        )
+                    }
 
                     Row(
                         modifier = Modifier

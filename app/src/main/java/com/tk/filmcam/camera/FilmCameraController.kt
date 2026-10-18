@@ -10,6 +10,8 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
 import android.util.Size
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.OrientationEventListener
 import android.view.ScaleGestureDetector
 import android.view.Surface
@@ -20,11 +22,14 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import androidx.camera.core.Preview
 import androidx.camera.core.ZoomState
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
@@ -114,11 +119,28 @@ class FilmCameraController(
     private var imageCapture: ImageCapture? = null
     private var preview: Preview? = null
 
+    /**
+     * The camera2 interop handle, used only for manual focus. CameraX has no
+     * public focus-distance control, so the lens is driven through the raw
+     * capture request. Null when the device does not offer the camera2 path.
+     */
+    private var camera2Control: Camera2CameraControl? = null
+
+    /**
+     * Closest focus the lens can reach, in dioptres (1 / metres), read from
+     * [CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE]. Zero means the
+     * lens is fixed-focus or does not report a range, and manual focus is off.
+     */
+    private var maxFocusDistance: Float = 0f
+
     /** Where the camera draws: the graded GL surface, or a plain PreviewView fallback. */
     private var previewProvider: Preview.SurfaceProvider? = null
 
     /** Notified whenever the viewfinder's rotation or mirroring must change. */
     var onLensChanged: ((FilmLookRenderer.LensInfo) -> Unit)? = null
+
+    /** Notified when the viewfinder is tapped, i.e. the user wants autofocus back. */
+    var onTapToFocus: (() -> Unit)? = null
 
     /** The display the camera preview is drawn into, for rotation queries. */
     var displayRotationProvider: (() -> Int)? = null
@@ -149,6 +171,31 @@ class FilmCameraController(
 
     var flashEnabled: Boolean = false
         private set
+
+    /**
+     * True while the lens is being focused by hand, false while autofocus owns
+     * it. The UI reads this to decide whether the focus slider is in control.
+     */
+    var manualFocus: Boolean = false
+        private set
+
+    /**
+     * Whether this lens can be focused by hand at all. A fixed-focus or
+     * unknown-optics camera reports no minimum focus distance, and the slider
+     * stays disabled rather than pretending to work.
+     */
+    val canManualFocus: Boolean
+        get() = maxFocusDistance > 0f
+
+    /** Notified when manual focus is engaged or released, so the UI can follow. */
+    var onManualFocusChanged: ((Boolean) -> Unit)? = null
+
+    /**
+     * Notified once the bound lens's capabilities are known, so the UI can
+     * enable or hide the focus slider instead of offering a control that will
+     * do nothing.
+     */
+    var onFocusCapability: ((Boolean) -> Unit)? = null
 
     private var targetRotation: Int = Surface.ROTATION_0
 
@@ -244,6 +291,22 @@ class FilmCameraController(
         preview = newPreview
         imageCapture = newCapture
         camera = bound
+
+        // Manual focus goes through the camera2 interop: CameraX exposes zoom
+        // and 3A, but no way to drive the lens position, and no focus distance
+        // in its public surface at all. If either the control or a usable focus
+        // range is missing, manual focus stays off and the slider is disabled.
+        camera2Control = runCatching {
+            Camera2CameraControl.from(bound.cameraControl)
+        }.getOrNull()
+        maxFocusDistance = runCatching {
+            Camera2CameraInfo.from(bound.cameraInfo).getCameraCharacteristic(
+                CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
+            ) ?: 0f
+        }.getOrDefault(0f)
+        manualFocus = false
+        onManualFocusChanged?.invoke(false)
+        onFocusCapability?.invoke(canManualFocus)
 
         sensorOrientation = runCatching {
             val chars = Camera2CameraInfo.from(bound.cameraInfo).getCameraCharacteristic(
@@ -342,10 +405,26 @@ class FilmCameraController(
             }
         )
         detector.isQuickScaleEnabled = true
+        val tapDetector = GestureDetector(
+            context,
+            object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(e: MotionEvent): Boolean = true
+
+                override fun onSingleTapUp(e: MotionEvent): Boolean {
+                    // A tap is the user taking the lens back: release manual
+                    // focus so autofocus resumes.
+                    resetFocus()
+                    onTapToFocus?.invoke()
+                    view.performClick()
+                    return true
+                }
+            }
+        )
         view.setOnTouchListener { _, event ->
+            val tapped = tapDetector.onTouchEvent(event)
             val handled = detector.onTouchEvent(event)
-            if (!handled) view.performClick()
-            handled
+            if (!tapped && !handled) view.performClick()
+            tapped || handled
         }
         scaleDetector = detector
     }
@@ -374,6 +453,42 @@ class FilmCameraController(
 
     fun resetZoom() {
         setZoomRatio(minZoomRatio)
+    }
+
+    /**
+     * Drive the lens by hand. [fraction] runs 0 (far, infinity) to 1 (nearest,
+     * the lens's minimum focus distance). The scale is linear in dioptres, which
+     * is how a manual focus ring behaves: the far half is a long throw and the
+     * near half moves quickly.
+     *
+     * Ignored on a lens with no manual focus (see [canManualFocus]).
+     */
+    fun setManualFocus(fraction: Float) {
+        val control = camera2Control ?: return
+        if (!canManualFocus) return
+        val dioptres = fraction.coerceIn(0f, 1f) * maxFocusDistance
+        manualFocus = true
+        control.setCaptureRequestOptions(
+            CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(
+                    CaptureRequest.CONTROL_AF_MODE,
+                    CaptureRequest.CONTROL_AF_MODE_OFF
+                )
+                .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, dioptres)
+                .build()
+        )
+        onManualFocusChanged?.invoke(true)
+    }
+
+    /**
+     * Hand the lens back to autofocus. Clearing the request options drops the
+     * AF-mode override, so CameraX's own continuous autofocus resumes and there
+     * is no need to seed a fresh focus trigger.
+     */
+    fun resetFocus() {
+        camera2Control?.clearCaptureRequestOptions()
+        manualFocus = false
+        onManualFocusChanged?.invoke(false)
     }
 
     fun toggleTorch(): Boolean {
@@ -567,6 +682,7 @@ class FilmCameraController(
         scaleDetector = null
         cameraProvider?.unbindAll()
         cameraProvider = null
+        camera2Control = null
         camera = null
         preview = null
         imageCapture = null

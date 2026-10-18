@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -126,3 +129,46 @@ fun StatusBar(message: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun Spacer8(modifier: Modifier = Modifier) = Spacer(modifier.width(8.dp))
+
+/**
+ * Manual focus. The slider maps left-to-right onto the lens's focus throw, far
+ * to near, and drags the camera out of autofocus the moment it moves. The label
+ * reads AF while the camera still owns focus, which is also how it gets back:
+ * tapping the viewfinder. Disabled outright on a lens with no focus range, so
+ * it never looks like it is doing something it cannot.
+ */
+@Composable
+fun FocusSlider(
+    fraction: Float,
+    manual: Boolean,
+    enabled: Boolean,
+    onChange: (Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = if (manual) "MF" else "AF",
+            color = if (manual) Color(0xFFFFC24B) else Color.White.copy(alpha = 0.7f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.width(28.dp)
+        )
+        Slider(
+            value = fraction,
+            onValueChange = onChange,
+            enabled = enabled,
+            modifier = Modifier.width(180.dp),
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = Color(0xFFFFC24B),
+                inactiveTrackColor = Color.White.copy(alpha = 0.2f),
+                disabledThumbColor = Color.White.copy(alpha = 0.3f),
+                disabledActiveTrackColor = Color.White.copy(alpha = 0.12f),
+                disabledInactiveTrackColor = Color.White.copy(alpha = 0.1f)
+            )
+        )
+    }
+}
