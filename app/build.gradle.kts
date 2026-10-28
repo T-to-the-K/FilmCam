@@ -22,8 +22,8 @@ android {
         applicationId = "com.tk.filmcam"
         minSdk = 30
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.5.8"
+        versionCode = 13
+        versionName = "0.5.9"
     }
 
     signingConfigs {

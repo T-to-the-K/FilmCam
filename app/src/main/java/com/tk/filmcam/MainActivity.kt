@@ -3,6 +3,8 @@ package com.tk.filmcam
 import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.media.AudioAttributes
+import android.media.SoundPool
 import android.os.Bundle
 import android.view.Surface
 import android.widget.Toast
@@ -54,7 +56,9 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.tk.filmcam.camera.FilmCameraController
 import com.tk.filmcam.film.FilmCamera
 import com.tk.filmcam.gl.FilmGlPreview
+import com.tk.filmcam.ui.CaptureAnimation
 import com.tk.filmcam.ui.FilmCrosshair
+import com.tk.filmcam.ui.FilmFrame
 import com.tk.filmcam.ui.FilterEntryPill
 import com.tk.filmcam.ui.FilterPanel
 import com.tk.filmcam.ui.FocusSlider
@@ -120,6 +124,36 @@ private fun FilmCamScreen(
 
     val controller = remember {
         FilmCameraController(context, lifecycleOwner)
+    }
+
+    val shutterSound = remember {
+        SoundPool.Builder()
+            .setMaxStreams(2)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            )
+            .build()
+    }
+    var shutterSoundId by remember { mutableStateOf(0) }
+    var shutterSoundReady by remember { mutableStateOf(false) }
+
+    DisposableEffect(shutterSound) {
+        shutterSound.setOnLoadCompleteListener { _, _, status ->
+            shutterSoundReady = status == 0
+        }
+        shutterSoundId = shutterSound.load(context, R.raw.cat_meow, 1)
+        onDispose {
+            shutterSound.release()
+        }
+    }
+
+    fun playShutter() {
+        if (shutterSoundReady) {
+            shutterSound.play(shutterSoundId, 1f, 1f, 1, 0, 1f)
+        }
     }
 
     val previewHolder = remember { mutableStateOf<FilmGlPreview?>(null) }
@@ -230,6 +264,10 @@ private fun FilmCamScreen(
         }
 
         if (permissionGranted) {
+            FilmFrame(
+                film = selectedFilm,
+                modifier = Modifier.fillMaxSize()
+            )
             FilmCrosshair(
                 film = selectedFilm,
                 modifier = Modifier.fillMaxSize()
@@ -319,6 +357,7 @@ private fun FilmCamScreen(
                             onClick = {
                                 saving = true
                                 status = savingMessage
+                                playShutter()
                                 controller.capture(selectedFilm) { result ->
                                     saving = false
                                     status = if (result.startsWith("http") || result.contains("/")) {
@@ -449,6 +488,7 @@ private fun FilmCamScreen(
                             onClick = {
                                 saving = true
                                 status = savingMessage
+                                playShutter()
                                 controller.capture(selectedFilm) { result ->
                                     saving = false
                                     status = if (result.startsWith("http") || result.contains("/")) {
@@ -472,6 +512,12 @@ private fun FilmCamScreen(
                 }
             }
         }
+        CaptureAnimation(
+            film = selectedFilm,
+            active = saving,
+            modifier = Modifier.fillMaxSize()
+        )
+
         if (showFilters) {
             FilterPanel(
                 selected = selectedFilm,
