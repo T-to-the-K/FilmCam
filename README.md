@@ -1,6 +1,12 @@
 # FilmCam
 
-A one-tap film camera for Android.
+<p align="center">
+  <img src="docs/screenshot.webp" width="300" alt="FilmCam viewfinder">
+</p>
+
+**A one-tap film camera for Android — pick a film, shoot, and the look is baked in.**
+
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 Pick the film look you want and shoot. FilmCam applies that grade to the live
 viewfinder and to the saved photo, the same look in both. No settings panels, no
@@ -9,6 +15,12 @@ accounts, no ads, no analytics.
 <p align="center">
   <em>Pick a film → shoot. That's the whole app.</em>
 </p>
+
+## Demo
+
+FilmCam is a native Android app, so there is no hosted web demo — the screenshot
+above shows the core loop. To try it live, grab the latest signed APK from the
+[Releases](https://github.com/T-to-the-K/FilmCam/releases) page and sideload it.
 
 ## How it works
 
@@ -97,6 +109,11 @@ app/src/main/java/com/tk/filmcam/
 - [ ] Frame counter per film type (24/36 exposures)
 - [ ] **Rolls** — a finite number of exposures with a fixed grain seed per roll
 
-## Licence
+## Contributing
 
-Apache-2.0. See [LICENSE](LICENSE).
+Bug reports, feature ideas, and pull requests are welcome — open an issue on
+GitHub.
+
+## License
+
+[Apache-2.0](LICENSE) © 2026 Muhammad Talha Khattak
