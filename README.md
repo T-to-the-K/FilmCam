@@ -1,9 +1,5 @@
 # FilmCam
 
-<p align="center">
-  <img src="docs/screenshot.webp" width="300" alt="FilmCam viewfinder">
-</p>
-
 **A one-tap film camera for Android — pick a film, shoot, and the look is baked in.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -18,8 +14,8 @@ accounts, no ads, no analytics.
 
 ## Demo
 
-FilmCam is a native Android app, so there is no hosted web demo — the screenshot
-above shows the core loop. To try it live, grab the latest signed APK from the
+FilmCam is a native Android app, so there is no hosted web demo. To try it live,
+grab the latest signed APK from the
 [Releases](https://github.com/T-to-the-K/FilmCam/releases) page and sideload it.
 
 ## How it works
@@ -36,16 +32,19 @@ then lifted blacks for the faded look, then the optical passes.
 
 | Gesture / control | What it does |
 |---|---|
-| Tap a film in the strip | Re-grade the viewfinder immediately |
+| Film pill (bottom right) | Open the film grid; pick a look to re-grade the viewfinder |
 | Pinch the viewfinder | Zoom, following the device's own zoom range |
 | `−` / `+` | Step the zoom; the pill between them shows the ratio |
-| `⚡` | Flash on stills |
-| `☀` | Torch |
-| `⟳` | Flip between the front and back lens |
-| Shutter | Shoot |
+| `AF` slider | Drag to focus manually, far to near; the label switches to `MF` |
+| Tap the viewfinder | Return to autofocus |
+| Flash icon | Flash on stills |
+| Torch icon | Constant light |
+| Shutter | Shoot — the film box closes, then a meow |
 
-The layout is orientation-aware. Portrait keeps the controls along the bottom
-edge; landscape moves them into a right-hand column, where the thumb already is.
+The layout is orientation-aware. Portrait keeps flash and torch in a top bar and
+the film pill, zoom, focus and shutter along the bottom; landscape moves the
+controls into a right-hand column, where the thumb already is. Each film draws
+its own border and crosshair around the view box.
 
 ## The film looks
 
