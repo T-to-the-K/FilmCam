@@ -2,6 +2,7 @@ package com.tk.filmcam.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -32,11 +33,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tk.filmcam.R
@@ -48,7 +53,6 @@ fun FilterEntryPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val label = stringResource(film.labelRes)
     val desc = stringResource(R.string.cd_open_filters)
     val borderColor by animateColorAsState(
         targetValue = Color.White.copy(alpha = 0.18f),
@@ -56,19 +60,22 @@ fun FilterEntryPill(
     )
     Box(
         modifier = modifier
+            .width(64.dp)
             .height(48.dp)
             .background(Color.Black.copy(alpha = 0.4f), RoundedCornerShape(24.dp))
             .border(width = 1.dp, color = borderColor, shape = RoundedCornerShape(24.dp))
             .clickable(onClick = onClick)
             .semantics { contentDescription = desc }
-            .padding(horizontal = 18.dp),
+            .padding(5.dp),
         contentAlignment = Alignment.Center
     ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Normal
+        Image(
+            painter = painterResource(film.artRes),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(19.dp))
         )
     }
 }
@@ -161,25 +168,39 @@ private fun FilterGridItem(
         label = "filterGridBackground"
     )
 
-    Box(
+    Column(
         modifier = Modifier
-            .height(48.dp)
-            .background(background, RoundedCornerShape(24.dp))
+            .height(176.dp)
+            .background(background, RoundedCornerShape(20.dp))
             .border(
                 width = if (isSelected) 2.dp else 1.dp,
                 color = borderColor,
-                shape = RoundedCornerShape(24.dp)
+                shape = RoundedCornerShape(20.dp)
             )
             .clickable(onClick = onClick)
             .semantics { contentDescription = if (isSelected) selectedDesc else labelDesc }
-            .padding(horizontal = 18.dp),
-        contentAlignment = Alignment.Center
+            .padding(10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
+        Image(
+            painter = painterResource(film.artRes),
+            contentDescription = null,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        )
+        Spacer(Modifier.height(4.dp))
         Text(
             text = label,
-            color = Color.White,
-            fontSize = 14.sp,
-            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+            color = if (isSelected) MaterialTheme.colorScheme.primary
+            else Color.White.copy(alpha = 0.92f),
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
         )
     }
 }

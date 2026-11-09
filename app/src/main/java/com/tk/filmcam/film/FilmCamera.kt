@@ -1,5 +1,6 @@
 package com.tk.filmcam.film
 
+import androidx.annotation.DrawableRes
 import androidx.annotation.StringRes
 import com.tk.filmcam.R
 
@@ -20,6 +21,8 @@ import com.tk.filmcam.R
 enum class FilmCamera(
     val id: String,
     @StringRes val labelRes: Int,
+    /** Camera artwork shown in the filter picker. */
+    @DrawableRes val artRes: Int,
     /** 3:2, 4:3, 1:1, 4:5 ... encoded as a float ratio width/height. */
     val aspectRatio: Float,
     /** Per-channel RGB multipliers applied before the tone curve. */
@@ -50,6 +53,7 @@ enum class FilmCamera(
     CCD(
         id = "ccd",
         labelRes = R.string.film_ccd,
+        artRes = R.drawable.filter_ccd,
         aspectRatio = 4f / 3f,
         rgbGain = floatArrayOf(0.97f, 1.00f, 1.16f),
         saturation = 1.18f,
@@ -67,6 +71,7 @@ enum class FilmCamera(
     FILM135(
         id = "135",
         labelRes = R.string.film_135,
+        artRes = R.drawable.filter_135,
         aspectRatio = 3f / 2f,
         rgbGain = floatArrayOf(1.05f, 1.00f, 0.92f),
         saturation = 1.10f,
@@ -84,6 +89,7 @@ enum class FilmCamera(
     FILM120(
         id = "120",
         labelRes = R.string.film_120,
+        artRes = R.drawable.filter_120,
         aspectRatio = 1f / 1f,
         rgbGain = floatArrayOf(0.98f, 1.00f, 1.04f),
         saturation = 0.72f,
@@ -101,6 +107,7 @@ enum class FilmCamera(
     COMPACT(
         id = "compact",
         labelRes = R.string.film_compact,
+        artRes = R.drawable.filter_compact,
         aspectRatio = 4f / 3f,
         rgbGain = floatArrayOf(1.08f, 1.00f, 0.94f),
         saturation = 1.42f,
@@ -118,6 +125,7 @@ enum class FilmCamera(
     DISPOSABLE(
         id = "disposable",
         labelRes = R.string.film_disposable,
+        artRes = R.drawable.filter_disposable,
         aspectRatio = 1f / 1f,
         rgbGain = floatArrayOf(1.12f, 1.08f, 0.74f),
         saturation = 1.30f,
@@ -135,6 +143,7 @@ enum class FilmCamera(
     INSTANT(
         id = "instant",
         labelRes = R.string.film_instant,
+        artRes = R.drawable.filter_instant,
         aspectRatio = 1f / 1f,
         rgbGain = floatArrayOf(1.04f, 0.97f, 1.08f),
         saturation = 0.98f,
@@ -152,6 +161,7 @@ enum class FilmCamera(
     LOMO(
         id = "lomo",
         labelRes = R.string.film_lomo,
+        artRes = R.drawable.filter_lomo,
         aspectRatio = 3f / 2f,
         rgbGain = floatArrayOf(1.12f, 0.94f, 1.10f),
         saturation = 1.34f,
@@ -169,6 +179,7 @@ enum class FilmCamera(
     SUPER8(
         id = "super8",
         labelRes = R.string.film_super8,
+        artRes = R.drawable.filter_super8,
         aspectRatio = 4f / 3f,
         rgbGain = floatArrayOf(1.20f, 0.97f, 0.70f),
         saturation = 0.92f,
